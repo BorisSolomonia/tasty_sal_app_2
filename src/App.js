@@ -563,3 +563,4 @@ function MainController() {
 }
 
 export default App;
+export { t, getTomorrow, getToday };
