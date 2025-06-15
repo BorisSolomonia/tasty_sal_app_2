@@ -163,6 +163,13 @@ const t = {
     submitPayment: "გადახდის შენახვა",
     purchaseSaved: "შესყიდვა შენახულია",
     changesSaved: "ცვლილებები შენახულია",
+    // Delivery Check
+    deliveryCheck: "მიწოდებების შემოწმება",
+    uploadExcel: "Excel ფაილის ატვირთვა",
+    ordersTotal: "შეკვეთების ჯამი",
+    deliveriesTotal: "მიწოდებების ჯამი",
+    difference: "განსხვავება",
+    noDataFound: "მონაცემები ვერ მოიძებნა",
 };
 
 // ============================================================================
@@ -427,6 +434,78 @@ const AccountsPayablePage = () => {
     </table></div><Modal isOpen={isModalOpen} onClose={handleModalClose} title={`${t.recordPayment} - ${selectedSupplier}`}><div className="space-y-4"><label className="block">{t.paymentAmount}:</label><input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="0.00" className="w-full p-2 border rounded-md"/><div className="text-right"><button onClick={handlePaymentSubmit} className="py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700">{t.submitPayment}</button></div></div></Modal></div>);
 };
 
+// --- Admin: Delivery Check ---
+const DeliveryCheckPage = () => {
+    const { orders } = useData();
+    const [deliveries, setDeliveries] = useState([]);
+
+    const comparison = useMemo(() => {
+        const totals = {};
+        orders.filter(o => o.OrderStatus === 'Completed').forEach(o => {
+            const key = `${o.OrderDate.toISOString().split('T')[0]}-${o.CustomerName}`;
+            if (!totals[key]) totals[key] = 0;
+            totals[key] += o.TotalPrice || (o.Quantity * (o.salesPrice || o.UnitPrice || 0));
+        });
+        return deliveries.map(d => {
+            const key = `${d.date}-${d.customer}`;
+            const orderTotal = totals[key] || 0;
+            return { ...d, orderTotal, diff: orderTotal - d.total };
+        });
+    }, [deliveries, orders]);
+
+    const handleFile = (e) => {
+        const file = e.target.files[0];
+        if (!file || !window.XLSX) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const data = new Uint8Array(evt.target.result);
+            const wb = window.XLSX.read(data, { type: 'array' });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            const parsed = rows.slice(1).map(r => ({
+                date: new Date(r[0]).toISOString().split('T')[0],
+                customer: r[1],
+                total: parseFloat(r[2]) || 0
+            })).filter(r => r.customer);
+            setDeliveries(parsed);
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border">
+            <h2 className="text-xl font-bold mb-4">{t.deliveryCheck}</h2>
+            <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="mb-4" />
+            {comparison.length > 0 ? (
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-3 py-2">{t.date}</th>
+                                <th className="px-3 py-2">{t.customer}</th>
+                                <th className="px-3 py-2">{t.ordersTotal}</th>
+                                <th className="px-3 py-2">{t.deliveriesTotal}</th>
+                                <th className="px-3 py-2">{t.difference}</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y">
+                            {comparison.map((row, i) => (
+                                <tr key={i}>
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.date}</td>
+                                    <td className="px-3 py-2">{row.customer}</td>
+                                    <td className="px-3 py-2">${row.orderTotal.toFixed(2)}</td>
+                                    <td className="px-3 py-2">${row.total.toFixed(2)}</td>
+                                    <td className={`px-3 py-2 font-bold ${row.diff === 0 ? 'text-green-600' : 'text-red-600'}`}>${row.diff.toFixed(2)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : <p>{t.noDataFound}</p>}
+        </div>
+    );
+};
+
 // ============================================================================
 // 5. TOP-LEVEL APPLICATION COMPONENTS
 // ============================================================================
@@ -465,6 +544,7 @@ const Dashboard = () => {
       case 'orders-for-purchase': return user.role === 'Purchase Manager' ? <OrdersForPurchasePage onDone={navigateToSupplierAssignment} /> : null;
       case 'assign-suppliers': return user.role === 'Purchase Manager' ? <SupplierAssignmentPage processedOrders={processedOrders} forDate={processedDate} onBack={() => setActiveView('orders-for-purchase')} /> : null;
       case 'accounts-payable': return user.role === 'Purchase Manager' ? <AccountsPayablePage /> : null;
+      case 'delivery-check': return user.role === 'Admin' ? <DeliveryCheckPage /> : null;
       default:
         return <div className="p-6 bg-white rounded-lg shadow-md border"><h2 className="text-xl font-semibold">{t.welcome}, {user.name}!</h2><p className="text-gray-600 mt-2">{t.selectOption}</p></div>;
     }
@@ -472,11 +552,12 @@ const Dashboard = () => {
 
   const navLinks = {
     Admin: [
-        { label: t.userManagement, view: 'user-management' }, 
+        { label: t.userManagement, view: 'user-management' },
         { label: t.addProduct, view: 'add-product' },
         { label: t.manageProducts, view: 'manage-products' },
         { label: t.manageCustomers, view: 'manage-customers' },
         { label: t.orderSummary, view: 'order-summary' },
+        { label: t.deliveryCheck, view: 'delivery-check' },
     ],
     Seller: [{ label: t.addOrder, view: 'add-order' }, { label: t.orderSummary, view: 'order-summary' }, { label: t.addCustomer, view: 'add-customer' }],
     'Purchase Manager': [{ label: t.ordersForPurchase, view: 'orders-for-purchase' }, {label: t.orderSummary, view: 'order-summary'}, { label: t.accountsPayable, view: 'accounts-payable' }, { label: t.addCustomer, view: 'add-customer' }],
