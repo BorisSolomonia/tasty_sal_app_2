@@ -52,6 +52,45 @@ const getTomorrow = () => {
 
 const getToday = () => new Date();
 
+// Parse dates from Excel cells that use mm/dd/yyyy format
+const parseExcelDate = (value) => {
+    if (value instanceof Date) {
+        return value;
+    }
+    if (typeof value === 'number') {
+        // Convert Excel serialized date to JS date
+        const date = new Date((value - (25567 + 2)) * 86400 * 1000);
+        if (isNaN(date.getTime())) {
+            // Handle invalid date
+            return null;
+        }
+        return date;
+    }
+    if (typeof value === 'string') {
+        const parts = value.split(/[\/\-]/);
+        if (parts.length === 3) {
+            const [month, day, year] = parts;
+            const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            if (isNaN(date.getTime())) {
+                // Handle invalid date
+                return null;
+            }
+            return date;
+        }
+        // Handle empty or invalid string input
+        if (!value.trim()) {
+            return null;
+        }
+        const date = new Date(value);
+        if (isNaN(date.getTime())) {
+            // Handle invalid date
+            return null;
+        }
+        return date;
+    }
+    return new Date(value);
+};
+
 // --- GEORGIAN TRANSLATION OBJECT ---
 const t = {
     // General
@@ -474,11 +513,14 @@ const DeliveryCheckPage = () => {
             const wb = window.XLSX.read(data, { type: 'array' });
             const sheet = wb.Sheets[wb.SheetNames[0]];
             const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
-            const parsed = rows.slice(1).map(r => ({
-                date: new Date(r[0]).toISOString().split('T')[0],
-                customer: r[1],
-                total: parseFloat(r[2]) || 0
-            })).filter(r => r.customer);
+            const parsed = rows.slice(1).map(r => {
+                const d = parseExcelDate(r[0]);
+                return {
+                    date: d.toISOString().split('T')[0],
+                    customer: r[1],
+                    total: parseFloat(r[2]) || 0
+                };
+            }).filter(r => r.customer);
             setDeliveries(parsed);
         };
         reader.readAsArrayBuffer(file);
@@ -671,4 +713,4 @@ function MainController() {
 }
 
 export default App;
-export { t, getTomorrow, getToday };
+export { t, getTomorrow, getToday, parseExcelDate };
