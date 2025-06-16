@@ -91,6 +91,14 @@ const parseExcelDate = (value) => {
     return new Date(value);
 };
 
+const normalizeName = (name) => {
+    if (typeof name !== 'string') {
+        if (name == null) return '';
+        name = String(name);
+    }
+    return name.trim().toLowerCase();
+};
+
 // --- GEORGIAN TRANSLATION OBJECT ---
 const t = {
     // General
@@ -530,12 +538,12 @@ const DeliveryCheckPage = () => {
     const comparison = useMemo(() => {
         const totals = {};
         orders.filter(o => o.OrderStatus === 'Completed').forEach(o => {
-            const key = `${o.OrderDate.toISOString().split('T')[0]}-${o.CustomerName}`;
+            const key = `${o.OrderDate.toISOString().split('T')[0]}-${normalizeName(o.CustomerName)}`;
             if (!totals[key]) totals[key] = 0;
             totals[key] += o.TotalPrice || (o.Quantity * (o.salesPrice || o.UnitPrice || 0));
         });
         return deliveries.map(d => {
-            const key = `${d.date}-${d.customer}`;
+            const key = `${d.date}-${normalizeName(d.customer)}`;
             const orderTotal = totals[key] || 0;
             return { ...d, orderTotal, diff: orderTotal - d.total };
         });
@@ -551,13 +559,14 @@ const DeliveryCheckPage = () => {
             const sheet = wb.Sheets[wb.SheetNames[0]];
             const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
             const parsed = rows.slice(1).map(r => {
-                const d = parseExcelDate(r[0]);
+                const dateObj = parseExcelDate(r[0]);
+                if (!dateObj || isNaN(dateObj.getTime())) return null;
                 return {
-                    date: d.toISOString().split('T')[0],
-                    customer: r[1],
+                    date: dateObj.toISOString().split('T')[0],
+                    customer: r[1] ? String(r[1]).trim() : '',
                     total: parseFloat(r[2]) || 0
                 };
-            }).filter(r => r.customer);
+            }).filter(r => r && r.customer);
             setDeliveries(parsed);
         };
         reader.readAsArrayBuffer(file);
