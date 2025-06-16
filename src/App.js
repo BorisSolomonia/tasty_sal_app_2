@@ -450,7 +450,7 @@ const OrderSummaryPage = ({ onRepeat }) => {
                 'კლიენტი': o.CustomerName,
                 'პროდუქტი': o.ProductName,
                 'რაოდენობა': o.Quantity,
-                'სრული ფასი': (o.TotalPrice || (o.Quantity * (o.salesPrice || o.UnitPrice || 0))).toFixed(2),
+                'სრული ფასი': ((o.TotalPrice ?? (o.Quantity * (o.salesPrice ?? o.UnitPrice ?? 0)))).toFixed(2),
                 'სტატუსი': o.OrderStatus,
                 'ტიპი': o.isBlack ? 'შავი' : '',
                 'დაამატა': o.EnteredBy,
