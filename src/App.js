@@ -1,4 +1,5 @@
 import React, { useState, createContext, useContext, useEffect, useMemo } from 'react';
+import { getTomorrow, getToday, parseExcelDate, normalizeName, t } from './utils';
 
 // ============================================================================
 // 1. FIREBASE & TRANSLATION SETUP
@@ -42,183 +43,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- HELPER FUNCTIONS ---
-const getTomorrow = () => {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow;
-};
-
-const getToday = () => new Date();
-
-// Parse dates from Excel cells that use mm/dd/yyyy format
-const parseExcelDate = (value) => {
-    if (value instanceof Date) {
-        return value;
-    }
-    if (typeof value === 'number') {
-        // Convert Excel serialized date to JS date
-        const date = new Date((value - (25567 + 2)) * 86400 * 1000);
-        if (isNaN(date.getTime())) {
-            // Handle invalid date
-            return null;
-        }
-        return date;
-    }
-    if (typeof value === 'string') {
-        const parts = value.split(/[\/\-]/);
-        if (parts.length === 3) {
-            const [month, day, year] = parts;
-            const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
-            if (isNaN(date.getTime())) {
-                // Handle invalid date
-                return null;
-            }
-            return date;
-        }
-        // Handle empty or invalid string input
-        if (!value.trim()) {
-            return null;
-        }
-        const date = new Date(value);
-        if (isNaN(date.getTime())) {
-            // Handle invalid date
-            return null;
-        }
-        return date;
-    }
-    return new Date(value);
-};
-
-const normalizeName = (name) => {
-    if (typeof name !== 'string') {
-        if (name == null) return '';
-        name = String(name);
-    }
-    return name.trim().toLowerCase();
-};
-
-// --- GEORGIAN TRANSLATION OBJECT ---
-const t = {
-    // General
-    appName: "გაყიდვების მართვა",
-    save: "შენახვა",
-    actions: "მოქმედებები",
-    edit: "რედაქტირება",
-    remove: "წაშლა",
-    back: "უკან",
-    // Login
-    loginTitle: "ავტორიზაცია",
-    email: "ელ. ფოსტა",
-    password: "პაროლი",
-    login: "შესვლა",
-    // Dashboard
-    welcome: "მოგესალმებით",
-    selectOption: "გთხოვთ, აირჩიოთ ოპერაცია მენიუდან.",
-    role: "როლი",
-    logout: "გასვლა",
-    // Admin
-    userManagement: "მომხმარებლების მართვა",
-    registerNewUser: "ახალი მომხმარებლის რეგისტრაცია",
-    fullName: "სრული სახელი",
-    registerUser: "მომხმარებლის რეგისტრაცია",
-    existingUsers: "არსებული მომხმარებლები",
-    seller: "გამყიდველი",
-    purchaseManager: "შესყიდვების მენეჯერი",
-    addProduct: "პროდუქტის დამატება",
-    addNewProduct: "ახალი პროდუქტის დამატება",
-    productSKU: "პროდუქტის SKU",
-    productName: "პროდუქტის დასახელება",
-    productExistsError: "პროდუქტი ამ SKU-თი უკვე არსებობს.",
-    manageProducts: "პროდუქტების მართვა",
-    manageCustomers: "კლიენტების მართვა",
-    delete: "წაშლა",
-    confirmDeleteTitle: "წაშლის დადასტურება",
-    confirmDeleteMsg: "დარწმუნებული ხართ, რომ გსურთ ამ ჩანაწერის წაშლა? ამ მოქმედების გაუქმება შეუძლებელია.",
-    cancel: "გაუქმება",
-    // Customer
-    addCustomer: "კლიენტის დამატება",
-    addNewCustomer: "ახალი კლიენტის დამატება",
-    companyName: "კომპანიის სახელი",
-    identificationNumber: "საიდენტიფიკაციო ნომერი",
-    contactInfo: "საკონტაქტო ინფორმაცია (არასავალდებულო)",
-    customerExistsError: "მომხმარებელი ამ საიდენტიფიკაციო ნომრით უკვე არსებობს.",
-    // Order
-    addOrder: "შეკვეთის დამატება",
-    orderSummary: "შეკვეთების სია",
-    addNewOrder: "ახალი შეკვეთის დამატება",
-    orderDate: "შეკვეთის თარიღი",
-    selectCustomer: "მოძებნეთ კლიენტი...",
-    loadLastOrder: "ბოლო შეკვეთის ჩატვირთვა",
-    selectProduct: "აირჩიეთ პროდუქტი",
-    quantityKg: "რაოდენობა (კგ)",
-    unitPrice: "ერთეულის ფასი",
-    totalPrice: "სრული ფასი",
-    commentOptional: "კომენტარი (არასავალდებულო)",
-    addToList: "სიაში დამატება",
-    pendingOrdersList: "მომლოდინე შეკვეთების სია",
-    product: "პროდუქტი",
-    qty: "რაოდ.",
-    total: "ჯამი",
-    type: "ტიპი",
-    saveAllOrders: "ყველა შეკვეთის შენახვა",
-    orderSaved: "შეკვეთა შენახულია",
-    filterByDate: "გაფილტვრა თარიღით",
-    exportToExcel: "Excel ექსპორტი",
-    orderId: "ID",
-    customer: "კლიენტი",
-    status: "სტატუსი",
-    enteredBy: "დაამატა",
-    modifiedBy: "შეცვალა",
-    comment: "კომენტარი",
-    noOrdersFound: "ამ თარიღზე შეკვეთები არ მოიძებნა.",
-    editOrder: "შეკვეთის რედაქტირება",
-    saveChanges: "ცვლილებების შენახვა",
-    cancelOrder: "შეკვეთის გაუქმება",
-    blackOrder: "შავი შეკვეთა",
-    repeatOrder: "გამეორება",
-    // Purchase Manager
-    ordersForPurchase: "შესასყიდი შეკვეთები",
-    processOrders: "შეკვეთების დამუშავება",
-    date: "თარიღი",
-    pendingOrders: "მომლოდინე შეკვეთები",
-    purchasePrice: "შესყიდვის ფასი",
-    salesPrice: "გაყიდვის ფასი",
-    aggregatedProducts: "დაჯგუფებული პროდუქტები",
-    totalQty: "სრული რაოდ.",
-    doneProceedToAssignment: "დასრულება - მომწოდებლის მიბმა",
-    confirmPriceUpdate: "ფასის განახლების დადასტურება",
-    applyToAllSimilar: "გავრცელდეს ამ თარიღის ყველა მსგავს პროდუქტზე?",
-    yesUpdateAll: "კი, ყველას განახლება",
-    noThisOrderOnly: "არა, მხოლოდ ამ შეკვეთის",
-    saveAllEdits: "ყველა ცვლილების შენახვა",
-    supplierAssignment: "მომწოდებლის მიბმა",
-    assignSuppliers: "მომწოდებლების მიბმა",
-    supplierName: "მომწოდებლის სახელი",
-    notesPayableSummary: "გადასახდელების ამონაწერი",
-    totalAmountOwed: "სულ გადასახდელი",
-    assignToSeeSummary: "მიაბით მომწოდებელი ამონაწერის სანახავად.",
-    saveSupplierAssignments: "მომწოდებლების შენახვა",
-    accountsPayable: "ანგარიშსწორება მომწოდებლებთან",
-    supplier: "მომწოდებელი",
-    totalPurchased: "სულ შესყიდული",
-    totalPaid: "სულ გადახდილი",
-    balanceOwed: "დავალიანება",
-    recordPayment: "გადახდის დაფიქსირება",
-    paymentAmount: "გადახდის თანხა",
-    submitPayment: "გადახდის შენახვა",
-    purchaseSaved: "შესყიდვა შენახულია",
-    changesSaved: "ცვლილებები შენახულია",
-    aggregatedOrders: "დაჯგუფებული შეკვეთები",
-    // Delivery Check
-    deliveryCheck: "მიწოდებების შემოწმება",
-    uploadExcel: "Excel ფაილის ატვირთვა",
-    ordersTotal: "შეკვეთების ჯამი",
-    deliveriesTotal: "მიწოდებების ჯამი",
-    difference: "განსხვავება",
-    noDataFound: "მონაცემები ვერ მოიძებნა",
-};
 
 // ============================================================================
 // 2. CONTEXT PROVIDERS (Authentication & Data Logic)
@@ -344,7 +168,25 @@ const Toast = ({ message, icon, show }) => {
 const UserManagementPage = () => {
     const { users } = useData(); const { registerUser } = useAuth(); const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'Seller' }); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
     const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
-    const handleSubmit = async (e) => { e.preventDefault(); if (!formData.name || !formData.email || !formData.password) { setError('გთხოვთ, შეავსოთ ყველა ველი.'); return; } setLoading(true); setError(''); try { await registerUser(formData.name, formData.email, formData.password, formData.role); alert('მომხმარებელი წარმატებით დარეგისტრირდა!'); setFormData({ name: '', email: '', password: '', role: 'Seller' }); } catch (err) { if (err.code === 'auth/email-already-in-use') { setError('ეს ელ. ფოსტა უკვე გამოყენებულია.'); } else { setError(err.message); } alert(`რეგისტრაციის შეცდომა: ${error || err.message}`); } setLoading(false); };
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!formData.name || !formData.email || !formData.password) {
+            setError('გთხოვთ, შეავსოთ ყველა ველი.');
+            return;
+        }
+        setLoading(true);
+        setError('');
+        try {
+            await registerUser(formData.name, formData.email, formData.password, formData.role);
+            alert('მომხმარებელი წარმატებით დარეგისტრირდა!');
+            setFormData({ name: '', email: '', password: '', role: 'Seller' });
+        } catch (err) {
+            const msg = err.code === 'auth/email-already-in-use' ? 'ეს ელ. ფოსტა უკვე გამოყენებულია.' : err.message;
+            setError(msg);
+            alert(`რეგისტრაციის შეცდომა: ${msg}`);
+        }
+        setLoading(false);
+    };
     return (<div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1 bg-white p-6 rounded-lg shadow-md border"><h2 className="text-xl font-bold mb-4 text-gray-700">{t.registerNewUser}</h2><form onSubmit={handleSubmit} className="space-y-4"><input type="text" name="name" value={formData.name} onChange={handleChange} placeholder={t.fullName} className="w-full p-2 border rounded-md"/><input type="email" name="email" value={formData.email} onChange={handleChange} placeholder={t.email} className="w-full p-2 border rounded-md"/><input type="password" name="password" value={formData.password} onChange={handleChange} placeholder={t.password} className="w-full p-2 border rounded-md"/><select name="role" value={formData.role} onChange={handleChange} className="w-full p-2 border rounded-md bg-white"><option value="Seller">{t.seller}</option><option value="Purchase Manager">{t.purchaseManager}</option></select><button type="submit" disabled={loading} className="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400">{loading ? '...' : t.registerUser}</button>{error && <p className="text-red-500 text-sm mt-2">{error}</p>}</form></div>
         <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md border"><h2 className="text-xl font-bold mb-4 text-gray-700">{t.existingUsers}</h2><div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200"><thead className="bg-gray-50"><tr><th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t.fullName}</th><th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t.email}</th><th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t.role}</th></tr></thead><tbody className="bg-white divide-y divide-gray-200">{users.map(u => (<tr key={u.id}><td className="px-4 py-3 text-sm">{u.name}</td><td className="px-4 py-3 text-sm">{u.email}</td><td className="px-4 py-3 text-sm"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${u.role === 'Admin' ? 'bg-red-100 text-red-800' : u.role === 'Seller' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{u.role}</span></td></tr>))}</tbody></table></div></div></div>);
 };
@@ -820,4 +662,3 @@ function MainController() {
 }
 
 export default App;
-export { t, getTomorrow, getToday, parseExcelDate };

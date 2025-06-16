@@ -1,4 +1,4 @@
-import { t, getTomorrow, getToday, parseExcelDate } from './App';
+import { t, getTomorrow, getToday, parseExcelDate } from './utils';
 
 describe('translation keys', () => {
   const keys = Object.keys(t).slice(0, 97);
