@@ -520,7 +520,7 @@ const AggregatedOrdersPage = () => {
             .forEach(o => {
                 const price = o.salesPrice || o.UnitPrice || 0;
                 const key = `${o.ProductSKU}-${price}`;
-                if (!groups[key]) groups[key] = { name: o.ProductName, price, qty: 0 };
+                if (!groups[key]) groups[key] = { sku: o.ProductSKU, name: o.ProductName, price, qty: 0 };
                 groups[key].qty += parseFloat(o.Quantity || 0);
             });
         return Object.values(groups);
