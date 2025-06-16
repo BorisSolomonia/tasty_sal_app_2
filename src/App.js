@@ -440,12 +440,49 @@ const OrderSummaryPage = ({ onRepeat }) => {
     const handleRepeatOrder = (order) => {
         onRepeat && onRepeat(order);
     };
-    const handleExport = () => { if(window.XLSX) { const dataToExport = isFullAccess ? orders : ordersToDisplay; const filename = isFullAccess ? 'ყველა_შეკვეთა.xlsx' : `შეკვეთები-${filterDate}.xlsx`; const worksheet = window.XLSX.utils.json_to_sheet(dataToExport.map(o => ({'ID': o.id, 'თარიღი': o.OrderDate.toLocaleDateString(), 'კლიენტი': o.CustomerName, 'პროდუქტი': o.ProductName, 'რაოდენობა': o.Quantity, 'სტატუსი': o.OrderStatus, 'ტიპი': o.isBlack ? 'შავი' : '', 'დაამატა': o.EnteredBy, 'შეცვალა': o.EditedBy || '', 'ცვლილების თარიღი': o.EditedTimestamp ? o.EditedTimestamp.toLocaleString() : '', 'კომენტარი': o.Comment || '' }))); const workbook = window.XLSX.utils.book_new(); window.XLSX.utils.book_append_sheet(workbook, worksheet, "Orders"); window.XLSX.writeFile(workbook, filename); } };
+    const handleExport = () => {
+        if(window.XLSX) {
+            const dataToExport = isFullAccess ? orders : ordersToDisplay;
+            const filename = isFullAccess ? 'ყველა_შეკვეთა.xlsx' : `შეკვეთები-${filterDate}.xlsx`;
+            const worksheet = window.XLSX.utils.json_to_sheet(dataToExport.map(o => ({
+                'ID': o.id,
+                'თარიღი': o.OrderDate.toLocaleDateString(),
+                'კლიენტი': o.CustomerName,
+                'პროდუქტი': o.ProductName,
+                'რაოდენობა': o.Quantity,
+                'სრული ფასი': (o.TotalPrice || (o.Quantity * (o.salesPrice || o.UnitPrice || 0))).toFixed(2),
+                'სტატუსი': o.OrderStatus,
+                'ტიპი': o.isBlack ? 'შავი' : '',
+                'დაამატა': o.EnteredBy,
+                'შეცვალა': o.EditedBy || '',
+                'ცვლილების თარიღი': o.EditedTimestamp ? o.EditedTimestamp.toLocaleString() : '',
+                'კომენტარი': o.Comment || ''
+            })));
+            const workbook = window.XLSX.utils.book_new();
+            window.XLSX.utils.book_append_sheet(workbook, worksheet, "Orders");
+            window.XLSX.writeFile(workbook, filename);
+        }
+    };
     
     return (<div className="bg-white p-6 rounded-lg shadow-md border"><div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">{t.orderSummary}</h2><button onClick={handleExport} className="py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-700">{t.exportToExcel}</button></div>
         {!isFullAccess && <div className="mb-4"><label className="mr-2">{t.filterByDate}:</label><input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="p-2 border rounded-md"/></div>}
-        <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-sm"><thead className="bg-gray-50"><tr>{[t.orderId, t.date, t.customer, t.product, t.qty, t.status, t.type, t.enteredBy, t.modifiedBy, t.comment, t.actions].map(h=><th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-        <tbody className="bg-white divide-y">{ordersToDisplay.map(order => (<tr key={order.id}><td className="px-3 py-2 whitespace-nowrap">{order.id.slice(-6)}</td><td className="px-3 py-2 whitespace-nowrap">{new Date(order.OrderDate).toLocaleDateString()}</td><td className="px-3 py-2">{order.CustomerName}</td><td className="px-3 py-2">{order.ProductName}</td><td className="px-3 py-2">{order.Quantity}</td><td className="px-3 py-2"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${order.OrderStatus === 'Pending' ? 'bg-yellow-100 text-yellow-800' : order.OrderStatus === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{order.OrderStatus}</span></td><td className="px-3 py-2">{order.isBlack && <span className="font-bold text-black">⚫</span>}</td><td className="px-3 py-2">{order.EnteredBy}</td><td className="px-3 py-2">{order.EditedBy ? `📝 ${order.EditedBy}` : ''}</td><td className="px-3 py-2">{order.Comment}</td><td className="px-3 py-2 flex space-x-2"><button onClick={() => handleRepeatOrder(order)} className="text-green-600">{t.repeatOrder}</button><button onClick={() => handleEditClick(order)} className="text-blue-600">{t.edit}</button>{user.role === 'Admin' && <button onClick={() => openConfirmModal(order.id)} className="text-red-600">{t.delete}</button>}</td></tr>))}</tbody>
+        <div className="overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-sm"><thead className="bg-gray-50"><tr>{[t.orderId, t.date, t.customer, t.product, t.qty, t.totalPrice, t.status, t.type, t.enteredBy, t.modifiedBy, t.comment, t.actions].map(h=><th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
+        <tbody className="bg-white divide-y">{ordersToDisplay.map(order => (
+            <tr key={order.id}>
+                <td className="px-3 py-2 whitespace-nowrap">{order.id.slice(-6)}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{new Date(order.OrderDate).toLocaleDateString()}</td>
+                <td className="px-3 py-2">{order.CustomerName}</td>
+                <td className="px-3 py-2">{order.ProductName}</td>
+                <td className="px-3 py-2">{order.Quantity}</td>
+                <td className="px-3 py-2">${(order.TotalPrice || (order.Quantity * (order.salesPrice || order.UnitPrice || 0))).toFixed(2)}</td>
+                <td className="px-3 py-2"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${order.OrderStatus === 'Pending' ? 'bg-yellow-100 text-yellow-800' : order.OrderStatus === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{order.OrderStatus}</span></td>
+                <td className="px-3 py-2">{order.isBlack && <span className="font-bold text-black">⚫</span>}</td>
+                <td className="px-3 py-2">{order.EnteredBy}</td>
+                <td className="px-3 py-2">{order.EditedBy ? `📝 ${order.EditedBy}` : ''}</td>
+                <td className="px-3 py-2">{order.Comment}</td>
+                <td className="px-3 py-2 flex space-x-2"><button onClick={() => handleRepeatOrder(order)} className="text-green-600">{t.repeatOrder}</button><button onClick={() => handleEditClick(order)} className="text-blue-600">{t.edit}</button>{user.role === 'Admin' && <button onClick={() => openConfirmModal(order.id)} className="text-red-600">{t.delete}</button>}</td>
+            </tr>
+        ))}</tbody>
         </table>{ordersToDisplay.length === 0 && <p className="text-center py-4">{t.noOrdersFound}</p>}</div>
         <ConfirmationModal isOpen={confirmState.isOpen} onClose={closeConfirmModal} onConfirm={handleDelete} title={t.confirmDeleteTitle} message={t.confirmDeleteMsg} />
         <Modal isOpen={isModalOpen} onClose={handleModalClose} title={`${t.editOrder} ${selectedOrder?.id.slice(-6)}`}><div className="space-y-4"><input type="number" value={editForm.Quantity} onChange={e => setEditForm({...editForm, Quantity: e.target.value})} placeholder={t.quantityKg} className="w-full p-2 border rounded-md"/><select value={editForm.OrderStatus} onChange={e => setEditForm({...editForm, OrderStatus: e.target.value})} className="w-full p-2 border bg-white rounded-md"><option>Pending</option><option>Completed</option><option>Cancelled</option></select><textarea value={editForm.Comment} onChange={e => setEditForm({...editForm, Comment: e.target.value})} placeholder={t.comment} className="w-full p-2 border rounded-md"/><div className="flex justify-end space-x-3"><button onClick={handleCancelOrder} className="py-2 px-4 bg-red-600 text-white rounded-md">{t.cancelOrder}</button><button onClick={handleSaveChanges} className="py-2 px-4 bg-blue-600 text-white rounded-md">{t.saveChanges}</button></div></div></Modal>
