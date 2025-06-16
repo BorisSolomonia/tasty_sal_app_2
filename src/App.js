@@ -91,7 +91,13 @@ const parseExcelDate = (value) => {
     return new Date(value);
 };
 
-const normalizeName = (name) => name ? name.trim().toLowerCase() : '';
+const normalizeName = (name) => {
+    if (typeof name !== 'string') {
+        if (name == null) return '';
+        name = String(name);
+    }
+    return name.trim().toLowerCase();
+};
 
 // --- GEORGIAN TRANSLATION OBJECT ---
 const t = {
