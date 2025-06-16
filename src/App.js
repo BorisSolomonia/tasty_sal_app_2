@@ -554,7 +554,7 @@ const DeliveryCheckPage = () => {
             const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
             const parsed = rows.slice(1).map(r => {
                 const dateObj = parseExcelDate(r[0]);
-                if (!dateObj) return null;
+                if (!dateObj || isNaN(dateObj.getTime())) return null;
                 return {
                     date: dateObj.toISOString().split('T')[0],
                     customer: r[1] ? String(r[1]).trim() : '',
