@@ -59,14 +59,34 @@ const parseExcelDate = (value) => {
     }
     if (typeof value === 'number') {
         // Convert Excel serialized date to JS date
-        return new Date((value - (25567 + 2)) * 86400 * 1000);
+        const date = new Date((value - (25567 + 2)) * 86400 * 1000);
+        if (isNaN(date.getTime())) {
+            // Handle invalid date
+            return null;
+        }
+        return date;
     }
     if (typeof value === 'string') {
         const parts = value.split(/[\/\-]/);
         if (parts.length === 3) {
             const [month, day, year] = parts;
-            return new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            if (isNaN(date.getTime())) {
+                // Handle invalid date
+                return null;
+            }
+            return date;
         }
+        // Handle empty or invalid string input
+        if (!value.trim()) {
+            return null;
+        }
+        const date = new Date(value);
+        if (isNaN(date.getTime())) {
+            // Handle invalid date
+            return null;
+        }
+        return date;
     }
     return new Date(value);
 };
