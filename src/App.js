@@ -454,7 +454,8 @@ const DeliveryCheckPage = () => {
             const wb = window.XLSX.read(data, { type: 'array' });
             const sheet = wb.Sheets[wb.SheetNames[0]];
             const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1 });
-            const parsed = rows.slice(1).map(r => {
+
+            const parsedRows = rows.slice(1).map(r => {
                 const dateObj = parseExcelDate(r[0]);
                 if (!dateObj || isNaN(dateObj.getTime())) return null;
                 return {
@@ -463,7 +464,17 @@ const DeliveryCheckPage = () => {
                     total: parseFloat(r[2]) || 0
                 };
             }).filter(r => r && r.customer);
-            setDeliveries(parsed);
+
+            const aggregated = {};
+            parsedRows.forEach(r => {
+                const key = `${r.date}-${normalizeName(r.customer)}`;
+                if (!aggregated[key]) {
+                    aggregated[key] = { date: r.date, customer: r.customer, total: 0 };
+                }
+                aggregated[key].total += r.total;
+            });
+
+            setDeliveries(Object.values(aggregated));
         };
         reader.readAsArrayBuffer(file);
     };
