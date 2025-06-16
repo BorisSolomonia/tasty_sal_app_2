@@ -210,6 +210,7 @@ const t = {
     submitPayment: "გადახდის შენახვა",
     purchaseSaved: "შესყიდვა შენახულია",
     changesSaved: "ცვლილებები შენახულია",
+    aggregatedOrders: "დაჯგუფებული შეკვეთები",
     // Delivery Check
     deliveryCheck: "მიწოდებების შემოწმება",
     uploadExcel: "Excel ფაილის ატვირთვა",
@@ -509,6 +510,59 @@ const OrdersForPurchasePage = ({ onDone }) => {
             <Modal isOpen={priceConfirmModal.isOpen} onClose={() => setPriceConfirmModal({isOpen: false})} title={t.confirmPriceUpdate}><p className="mb-6">{t.applyToAllSimilar}</p><div className="flex justify-around"><button onClick={() => handlePriceConfirm(true)} className="py-2 px-6 bg-blue-600 text-white rounded-md hover:bg-blue-700">{t.yesUpdateAll}</button><button onClick={() => handlePriceConfirm(false)} className="py-2 px-6 bg-gray-600 text-white rounded-md hover:bg-gray-700">{t.noThisOrderOnly}</button></div></Modal></div>);
 };
 
+const AggregatedOrdersPage = () => {
+    const { orders } = useData();
+    const [aggDate, setAggDate] = useState(getToday().toISOString().split('T')[0]);
+
+    const aggregates = useMemo(() => {
+        const groups = {};
+        orders.filter(o => new Date(o.OrderDate).toISOString().split('T')[0] === aggDate)
+            .forEach(o => {
+                const price = o.salesPrice || o.UnitPrice || 0;
+                const key = `${o.ProductSKU}-${price}`;
+                if (!groups[key]) groups[key] = { sku: o.ProductSKU, name: o.ProductName, price, qty: 0 };
+                groups[key].qty += parseFloat(o.Quantity || 0);
+            });
+        return Object.values(groups);
+    }, [orders, aggDate]);
+
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border space-y-4">
+            <div>
+                <label className="mr-2">{t.date}:</label>
+                <input type="date" value={aggDate} onChange={e => setAggDate(e.target.value)} className="p-2 border rounded-md" />
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead className="bg-gray-50">
+                        <tr>
+                            <th className="px-3 py-2 text-left">{t.product}</th>
+                            <th className="px-3 py-2 text-left">{t.totalQty}</th>
+                            <th className="px-3 py-2 text-left">{t.unitPrice}</th>
+                            <th className="px-3 py-2 text-left">{t.totalPrice}</th>
+                        </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y">
+                        {aggregates.map(a => (
+                            <tr key={`${a.sku}-${a.price}`} className="border-b">
+                                <td className="px-3 py-2 font-semibold">{a.name}</td>
+                                <td className="px-3 py-2">{a.qty.toFixed(2)} kg</td>
+                                <td className="px-3 py-2">${parseFloat(a.price).toFixed(2)}</td>
+                                <td className="px-3 py-2">${(a.qty * a.price).toFixed(2)}</td>
+                            </tr>
+                        ))}
+                        {aggregates.length === 0 && (
+                            <tr>
+                                <td colSpan="4" className="text-center p-4 text-gray-500">{t.noOrdersFound}</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
 const SupplierAssignmentPage = ({ processedOrders, forDate, onBack }) => {
     const { orders, updateMultipleOrderFields } = useData(); const [assignments, setAssignments] = useState({}); const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
     const aggregatedProducts = useMemo(() => { if (!processedOrders) return []; const groups = {}; processedOrders.forEach(o => { if (o.purchasePrice > 0) { const key = `${o.ProductSKU}-${o.purchasePrice}`; if (!groups[key]) groups[key] = { ProductSKU: o.ProductSKU, ProductName: o.ProductName, purchasePrice: o.purchasePrice, totalQuantity: 0, orderIds: [] }; groups[key].totalQuantity += parseFloat(o.Quantity || 0); groups[key].orderIds.push(o.id); } }); return Object.values(groups); }, [processedOrders]);
@@ -645,6 +699,7 @@ const Dashboard = () => {
       case 'order-summary':
         return user.role === 'Seller' || user.role === 'Purchase Manager' || user.role === 'Admin' ? <OrderSummaryPage onRepeat={(order) => { setPrefillOrder(order); setActiveView('add-order'); }} /> : null;
       case 'orders-for-purchase': return user.role === 'Purchase Manager' ? <OrdersForPurchasePage onDone={navigateToSupplierAssignment} /> : null;
+      case 'aggregated-orders': return user.role === 'Purchase Manager' ? <AggregatedOrdersPage /> : null;
       case 'assign-suppliers': return user.role === 'Purchase Manager' ? <SupplierAssignmentPage processedOrders={processedOrders} forDate={processedDate} onBack={() => setActiveView('orders-for-purchase')} /> : null;
       case 'accounts-payable': return user.role === 'Purchase Manager' ? <AccountsPayablePage /> : null;
       case 'delivery-check': return user.role === 'Admin' ? <DeliveryCheckPage /> : null;
@@ -663,7 +718,13 @@ const Dashboard = () => {
         { label: t.deliveryCheck, view: 'delivery-check' },
     ],
     Seller: [{ label: t.addOrder, view: 'add-order' }, { label: t.orderSummary, view: 'order-summary' }, { label: t.addCustomer, view: 'add-customer' }],
-    'Purchase Manager': [{ label: t.ordersForPurchase, view: 'orders-for-purchase' }, {label: t.orderSummary, view: 'order-summary'}, { label: t.accountsPayable, view: 'accounts-payable' }, { label: t.addCustomer, view: 'add-customer' }],
+  'Purchase Manager': [
+      { label: t.ordersForPurchase, view: 'orders-for-purchase' },
+      { label: t.aggregatedOrders, view: 'aggregated-orders' },
+      { label: t.orderSummary, view: 'order-summary' },
+      { label: t.accountsPayable, view: 'accounts-payable' },
+      { label: t.addCustomer, view: 'add-customer' }
+  ],
   };
 
   return (
