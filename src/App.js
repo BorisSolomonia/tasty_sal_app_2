@@ -544,7 +544,7 @@ const AggregatedOrdersPage = () => {
                     </thead>
                     <tbody className="bg-white divide-y">
                         {aggregates.map(a => (
-                            <tr key={`${a.name}-${a.price}`} className="border-b">
+                            <tr key={`${a.sku}-${a.price}`} className="border-b">
                                 <td className="px-3 py-2 font-semibold">{a.name}</td>
                                 <td className="px-3 py-2">{a.qty.toFixed(2)} kg</td>
                                 <td className="px-3 py-2">${parseFloat(a.price).toFixed(2)}</td>
