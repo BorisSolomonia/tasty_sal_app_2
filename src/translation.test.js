@@ -1,4 +1,4 @@
-import { t, getTomorrow, getToday } from './App';
+import { t, getTomorrow, getToday, parseExcelDate } from './App';
 
 describe('translation keys', () => {
   const keys = Object.keys(t).slice(0, 97);
@@ -21,5 +21,11 @@ describe('helper functions', () => {
   test('getToday returns today date', () => {
     const expected = new Date();
     expect(getToday().toDateString()).toBe(expected.toDateString());
+  });
+  test('parseExcelDate parses mm/dd/yyyy correctly', () => {
+    const result = parseExcelDate('02/15/2024');
+    expect(result.getFullYear()).toBe(2024);
+    expect(result.getMonth()).toBe(1); // February is month 1
+    expect(result.getDate()).toBe(15);
   });
 });
