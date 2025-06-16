@@ -181,9 +181,9 @@ const UserManagementPage = () => {
             alert('მომხმარებელი წარმატებით დარეგისტრირდა!');
             setFormData({ name: '', email: '', password: '', role: 'Seller' });
         } catch (err) {
-            const msg = err.code === 'auth/email-already-in-use' ? 'ეს ელ. ფოსტა უკვე გამოყენებულია.' : err.message;
-            setError(msg);
-            alert(`რეგისტრაციის შეცდომა: ${msg}`);
+const msg = err.code === 'auth/email-already-in-use' ? 'ეს ელ. ფოსტა უკვე გამოყენებულია.' : err.message;
+setError(msg);
+alert(`რეგისტრაციის შეცდომა: ${msg}`);
         }
         setLoading(false);
     };
