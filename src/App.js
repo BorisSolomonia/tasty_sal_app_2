@@ -336,10 +336,27 @@ const AddCustomerPage = () => {
 };
 
 // --- Seller: Add Order ---
-const AddOrderPage = () => {
+const AddOrderPage = ({ prefillOrder, onPrefillConsumed }) => {
     const { customers, products, orders, addBulkOrders } = useData(); const { user } = useAuth();
     const initialFormState = { OrderDate: getTomorrow().toISOString().split('T')[0], CustomerName: '', ProductSKU: '', ProductSearch: '', Quantity: '', UnitPrice: '', Comment: '', isBlack: false };
     const [formState, setFormState] = useState(initialFormState); const [tempOrderList, setTempOrderList] = useState([]); const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false); const [showProductSuggestions, setShowProductSuggestions] = useState(false);
+
+    useEffect(() => {
+        if (prefillOrder) {
+            const productName = products.find(p => p.ProductSKU === prefillOrder.ProductSKU)?.ProductName || '';
+            setFormState({
+                OrderDate: getTomorrow().toISOString().split('T')[0],
+                CustomerName: prefillOrder.CustomerName,
+                ProductSKU: prefillOrder.ProductSKU,
+                ProductSearch: productName,
+                Quantity: prefillOrder.Quantity,
+                UnitPrice: prefillOrder.UnitPrice,
+                Comment: prefillOrder.Comment || '',
+                isBlack: prefillOrder.isBlack || false
+            });
+            onPrefillConsumed && onPrefillConsumed();
+        }
+    }, [prefillOrder, products, onPrefillConsumed]);
     const selectedProduct = products.find(p => p.ProductSKU === formState.ProductSKU); const totalPrice = (parseFloat(formState.UnitPrice) || 0) * (parseFloat(formState.Quantity) || 0);
     const customerSuggestions = useMemo(() => { if (!formState.CustomerName) return []; return customers.filter(c => c.CustomerName.toLowerCase().includes(formState.CustomerName.toLowerCase())); }, [formState.CustomerName, customers]);
     const productSuggestions = useMemo(() => { if (!formState.ProductSearch) return []; return products.filter(p => p.ProductName.toLowerCase().includes(formState.ProductSearch.toLowerCase())); }, [formState.ProductSearch, products]);
@@ -370,8 +387,8 @@ const AddOrderPage = () => {
     </div>);
 };
 
-const OrderSummaryPage = () => {
-    const { orders, updateOrder, deleteDocument, addOrder } = useData(); const { user } = useAuth(); const [filterDate, setFilterDate] = useState(getToday().toISOString().split('T')[0]); const [isModalOpen, setIsModalOpen] = useState(false); const [selectedOrder, setSelectedOrder] = useState(null); const [editForm, setEditForm] = useState({ Quantity: '', OrderStatus: '', Comment: '' });
+const OrderSummaryPage = ({ onRepeat }) => {
+    const { orders, updateOrder, deleteDocument } = useData(); const { user } = useAuth(); const [filterDate, setFilterDate] = useState(getToday().toISOString().split('T')[0]); const [isModalOpen, setIsModalOpen] = useState(false); const [selectedOrder, setSelectedOrder] = useState(null); const [editForm, setEditForm] = useState({ Quantity: '', OrderStatus: '', Comment: '' });
     const [confirmState, setConfirmState] = useState({ isOpen: false, id: null });
     const isFullAccess = user.role === 'Admin';
     const ordersToDisplay = useMemo(() => isFullAccess ? orders : orders.filter(o => new Date(o.OrderDate).toISOString().split('T')[0] === filterDate), [orders, filterDate, isFullAccess]);
@@ -382,14 +399,7 @@ const OrderSummaryPage = () => {
     const handleSaveChanges = () => { if (!editForm.Quantity || parseFloat(editForm.Quantity) <= 0) { alert('მიუთითეთ ვალიდური რაოდენობა.'); return; } const updatedFields = { ...editForm, Quantity: parseFloat(editForm.Quantity), TotalPrice: selectedOrder.UnitPrice * parseFloat(editForm.Quantity), EditedBy: user.email, EditedTimestamp: Timestamp.now() }; updateOrder(selectedOrder.id, updatedFields); handleModalClose(); };
     const handleCancelOrder = () => { updateOrder(selectedOrder.id, { OrderStatus: 'Cancelled', EditedBy: user.email, EditedTimestamp: Timestamp.now() }); handleModalClose(); };
     const handleRepeatOrder = (order) => {
-        const newOrder = { ...order };
-        delete newOrder.id;
-        delete newOrder.EditedBy;
-        delete newOrder.EditedTimestamp;
-        newOrder.OrderDate = getTomorrow().toISOString().split('T')[0];
-        newOrder.EnteredBy = user.email;
-        newOrder.OrderStatus = 'Pending';
-        addOrder(newOrder);
+        onRepeat && onRepeat(order);
     };
     const handleExport = () => { if(window.XLSX) { const dataToExport = isFullAccess ? orders : ordersToDisplay; const filename = isFullAccess ? 'ყველა_შეკვეთა.xlsx' : `შეკვეთები-${filterDate}.xlsx`; const worksheet = window.XLSX.utils.json_to_sheet(dataToExport.map(o => ({'ID': o.id, 'თარიღი': o.OrderDate.toLocaleDateString(), 'კლიენტი': o.CustomerName, 'პროდუქტი': o.ProductName, 'რაოდენობა': o.Quantity, 'სტატუსი': o.OrderStatus, 'ტიპი': o.isBlack ? 'შავი' : '', 'დაამატა': o.EnteredBy, 'შეცვალა': o.EditedBy || '', 'ცვლილების თარიღი': o.EditedTimestamp ? o.EditedTimestamp.toLocaleString() : '', 'კომენტარი': o.Comment || '' }))); const workbook = window.XLSX.utils.book_new(); window.XLSX.utils.book_append_sheet(workbook, worksheet, "Orders"); window.XLSX.writeFile(workbook, filename); } };
     
@@ -517,6 +527,7 @@ const Dashboard = () => {
   
   const [processedOrders, setProcessedOrders] = useState(null);
   const [processedDate, setProcessedDate] = useState(null);
+  const [prefillOrder, setPrefillOrder] = useState(null);
 
   const fontSizes = ['text-sm', 'text-base', 'text-lg', 'text-xl'];
   const [fontSizeIndex, setFontSizeIndex] = useState(1);
@@ -541,8 +552,10 @@ const Dashboard = () => {
       case 'manage-products': return user.role === 'Admin' ? <ManageProductsPage /> : null;
       case 'manage-customers': return user.role === 'Admin' ? <ManageCustomersPage /> : null;
       case 'add-customer': return <AddCustomerPage />;
-      case 'add-order': return user.role === 'Seller' ? <AddOrderPage /> : null;
-      case 'order-summary': return user.role === 'Seller' || user.role === 'Purchase Manager' || user.role === 'Admin' ? <OrderSummaryPage /> : null;
+      case 'add-order':
+        return user.role === 'Seller' ? <AddOrderPage prefillOrder={prefillOrder} onPrefillConsumed={() => setPrefillOrder(null)} /> : null;
+      case 'order-summary':
+        return user.role === 'Seller' || user.role === 'Purchase Manager' || user.role === 'Admin' ? <OrderSummaryPage onRepeat={(order) => { setPrefillOrder(order); setActiveView('add-order'); }} /> : null;
       case 'orders-for-purchase': return user.role === 'Purchase Manager' ? <OrdersForPurchasePage onDone={navigateToSupplierAssignment} /> : null;
       case 'assign-suppliers': return user.role === 'Purchase Manager' ? <SupplierAssignmentPage processedOrders={processedOrders} forDate={processedDate} onBack={() => setActiveView('orders-for-purchase')} /> : null;
       case 'accounts-payable': return user.role === 'Purchase Manager' ? <AccountsPayablePage /> : null;
