@@ -28,6 +28,9 @@ import {
     Timestamp
 } from "firebase/firestore";
 
+// Font sizes available for the accessibility controls
+const FONT_SIZES = ['text-sm', 'text-base', 'text-lg', 'text-xl'];
+
 // --- PASTE YOUR FIREBASE CONFIG OBJECT HERE ---
 const firebaseConfig = {
   apiKey: "AIzaSyB15dF8g5C_2D55gOwSx7Txu0dUTKrqAQE",
@@ -524,15 +527,14 @@ const Dashboard = () => {
   const [processedDate, setProcessedDate] = useState(null);
   const [prefillOrder, setPrefillOrder] = useState(null);
 
-  const fontSizes = ['text-sm', 'text-base', 'text-lg', 'text-xl'];
   const [fontSizeIndex, setFontSizeIndex] = useState(1);
 
   useEffect(() => {
     document.documentElement.className = '';
-    document.documentElement.classList.add(fontSizes[fontSizeIndex]);
-  }, [fontSizeIndex, fontSizes]);
+    document.documentElement.classList.add(FONT_SIZES[fontSizeIndex]);
+  }, [fontSizeIndex]);
 
-  const increaseFontSize = () => setFontSizeIndex(i => Math.min(i + 1, fontSizes.length - 1));
+  const increaseFontSize = () => setFontSizeIndex(i => Math.min(i + 1, FONT_SIZES.length - 1));
   const decreaseFontSize = () => setFontSizeIndex(i => Math.max(i - 1, 0));
 
   const navigateToSupplierAssignment = (orders, date) => {

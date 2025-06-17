@@ -19,7 +19,7 @@ export const parseExcelDate = (value) => {
     return date;
   }
   if (typeof value === 'string') {
-    const parts = value.split(/[\/\-]/);
+    const parts = value.split(/[/-]/);
     if (parts.length === 3) {
       const [month, day, year] = parts;
       const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
