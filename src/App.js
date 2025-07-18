@@ -1,5 +1,7 @@
 import React, { useState, createContext, useContext, useEffect, useMemo } from 'react';
 import { getTomorrow, getToday, parseExcelDate, normalizeName, t } from './utils';
+import RSApiManagementPage from './RSApiManagementPage';
+import CustomerAnalysisPage from './CustomerAnalysisPage';
 
 // ============================================================================
 // 1. FIREBASE & TRANSLATION SETUP
@@ -577,6 +579,8 @@ const Dashboard = () => {
       case 'assign-suppliers': return user.role === 'Purchase Manager' ? <SupplierAssignmentPage processedOrders={processedOrders} forDate={processedDate} onBack={() => setActiveView('orders-for-purchase')} /> : null;
       case 'accounts-payable': return user.role === 'Purchase Manager' ? <AccountsPayablePage /> : null;
       case 'delivery-check': return user.role === 'Admin' ? <DeliveryCheckPage /> : null;
+      case 'rs-api-management': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <RSApiManagementPage /> : null;
+      case 'customer-analysis': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <CustomerAnalysisPage /> : null;
       default:
         return <div className="p-6 bg-white rounded-lg shadow-md border"><h2 className="text-xl font-semibold">{t.welcome}, {user.name}!</h2><p className="text-gray-600 mt-2">{t.selectOption}</p></div>;
     }
@@ -590,6 +594,8 @@ const Dashboard = () => {
         { label: t.manageCustomers, view: 'manage-customers' },
         { label: t.orderSummary, view: 'order-summary' },
         { label: t.deliveryCheck, view: 'delivery-check' },
+        { label: t.rsApiManagement, view: 'rs-api-management' },
+        { label: 'მომხმარებელთა ანალიზი', view: 'customer-analysis' },
     ],
     Seller: [{ label: t.addOrder, view: 'add-order' }, { label: t.orderSummary, view: 'order-summary' }, { label: t.addCustomer, view: 'add-customer' }],
   'Purchase Manager': [
@@ -597,7 +603,9 @@ const Dashboard = () => {
       { label: t.aggregatedOrders, view: 'aggregated-orders' },
       { label: t.orderSummary, view: 'order-summary' },
       { label: t.accountsPayable, view: 'accounts-payable' },
-      { label: t.addCustomer, view: 'add-customer' }
+      { label: t.addCustomer, view: 'add-customer' },
+      { label: t.rsApiManagement, view: 'rs-api-management' },
+      { label: 'მომხმარებელთა ანალიზი', view: 'customer-analysis' }
   ],
   };
 
