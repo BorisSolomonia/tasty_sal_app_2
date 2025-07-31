@@ -52,7 +52,7 @@ const db = getFirestore(app);
 // ============================================================================
 // 2. CONTEXT PROVIDERS (Authentication & Data Logic)
 // ============================================================================
-const AuthContext = createContext();
+export const AuthContext = createContext();
 
 const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
@@ -84,7 +84,7 @@ const AuthProvider = ({ children }) => {
     const value = { user, loading, login, logout, registerUser };
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-const useAuth = () => useContext(AuthContext);
+export const useAuth = () => useContext(AuthContext);
 
 const DataContext = createContext();
 
@@ -132,7 +132,7 @@ const DataProvider = ({ children }) => {
     const value = { users, products, customers, orders, payments, deleteDocument, addProduct, addCustomer, addBulkOrders, addOrder, updateOrder, updateMultipleOrderFields, addPayment };
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
-const useData = () => useContext(DataContext);
+export const useData = () => useContext(DataContext);
 
 // ============================================================================
 // 3. REUSABLE UI COMPONENTS

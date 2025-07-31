@@ -166,4 +166,6 @@ export const t = {
   deliveriesTotal: "მიწოდებების ჯამი",
   difference: "განსხვავება",
   noDataFound: "მონაცემები ვერ მოიძებნა",
+  // RS.ge API Management
+  rsApiManagement: "RS.ge API მართვა",
 };
