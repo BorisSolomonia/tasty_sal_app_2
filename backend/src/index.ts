@@ -6,12 +6,26 @@ import { callSoap } from "./soapClient";
 // Load environment variables
 dotenv.config();
 
+// Validate required environment variables
+const requiredEnvVars = ['SOAP_ENDPOINT', 'SOAP_SU', 'SOAP_SP'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:', missingEnvVars);
+  console.error('Please check your .env file or environment configuration');
+  process.exit(1);
+}
+
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : true,
-  credentials: true
+  origin: process.env.NODE_ENV === 'development' 
+    ? ['http://localhost:3000', 'http://localhost:3001']
+    : process.env.FRONTEND_URL || true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 

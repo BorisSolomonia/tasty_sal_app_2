@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3005:3005"
+      - "3006:3006"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # RS.ge API credentials (set these in production)
+      - SOAP_ENDPOINT=${SOAP_ENDPOINT:-https://services.rs.ge/WayBillService/WayBillService.asmx}
+      - SOAP_SU=${SOAP_SU}
+      - SOAP_SP=${SOAP_SP}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

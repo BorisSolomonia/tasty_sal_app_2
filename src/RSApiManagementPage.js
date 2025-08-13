@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useReducer, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useReducer } from 'react';
 // Assume: import { toast } from 'react-toastify'; // For toasts (optional)
 // Assume: import ReactJson from 'react-json-view'; // For better JSON view (optional)
 
@@ -41,13 +41,6 @@ const rsApiTranslations = {
   netVat: "წმინდა დღგ",
   vatForPeriod: "დღგ პერიოდისთვის",
   noDataForVat: "დღგ გამოსათვლელად მონაცემები არ არის",
-  individualVatCalculation: "ინდივიდუალური დღგ-ის გამოთვლა",
-  calculateIndividualVat: "ინდივიდუალური დღგ-ის გამოთვლა",
-  fetchIndividualWaybills: "ზედდებულების მომზადება",
-  processWaybillsForVat: "დღგ-ის გამოთვლა",
-  waybillsToProcess: "გამოსათვლელი ზედდებულები",
-  vatType0Products: "დღგ ტიპი 0 პროდუქტები",
-  individualVatTotal: "ინდივიდუალური დღგ სულ",
   waybillOperations: "ზედდებულის ოპერაციები",
   utilityOperations: "ამხსნელი ოპერაციები",
   advancedOperations: "დამატებითი ოპერაციები",
@@ -82,29 +75,45 @@ const reducer = (state, action) => {
 };
 
 const RSApiManagementPage = () => {
-  console.log('🏗️ RSApiManagementPage component is rendering/re-rendering');
-  
   const [state, dispatch] = useReducer(reducer, initialState);
   const { loading, results, error, loadingOperations } = state;
 
   const [soldWaybills, setSoldWaybills] = useState([]);
   const [purchasedWaybills, setPurchasedWaybills] = useState([]);
   const [vatCalculation, setVatCalculation] = useState({ soldVat: 0, purchasedVat: 0, netVat: 0 });
-  
-  // New state for individual VAT calculation
-  const [individualVatData, setIndividualVatData] = useState({ waybillIds: [], processedWaybills: [], totalVat: 0, loading: false, error: null });
-  const [purchaseVatAmount, setPurchaseVatAmount] = useState(0);
   const [vatLoading, setVatLoading] = useState(false);
+  
+  // Separate states for sold and purchased API responses (for debugging)
+  const [soldResults, setSoldResults] = useState(null);
+  const [purchasedResults, setPurchasedResults] = useState(null);
 
   // Simple cache for waybills API calls (key: `${operation}_${startDate}_${endDate}`)
   const [apiCache, setApiCache] = useState({});
-  const prevDatesRef = useRef({ startDate: '', endDate: '' });
 
   // Form states
   const [startDate, setStartDate] = useState(() => {
+    // Get current date in local timezone
     const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    return firstDay.toISOString().split('T')[0];
+    
+    // Create first day of current month explicitly
+    const year = now.getFullYear();
+    const month = now.getMonth(); // 0-indexed (0=January, 7=August)
+    const firstDay = new Date(year, month, 1);
+    
+    // Format as YYYY-MM-DD in local timezone to avoid timezone issues
+    const formattedDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    
+    // Debug logging
+    console.log('📅 Date initialization:', {
+      currentDate: now.toDateString(),
+      currentYear: year,
+      currentMonth: month, 
+      currentMonthName: now.toLocaleDateString('en-US', { month: 'long' }),
+      firstDayCalculated: firstDay.toDateString(),
+      formattedResult: formattedDate
+    });
+    
+    return formattedDate;
   });
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [waybillId, setWaybillId] = useState('');
@@ -114,173 +123,372 @@ const RSApiManagementPage = () => {
   const [invoiceData, setInvoiceData] = useState('');
   const [jsonErrors, setJsonErrors] = useState({ waybillData: '', invoiceData: '' });
 
-  // Utility: Extract and pre-process waybills (normalize amounts for fast VAT) - OPTIMIZED
-  const extractWaybillsFromResponse = useCallback((data) => {
-    const startTime = performance.now();
+  // Utility: Extract and pre-process waybills (normalize amounts for fast VAT)
+  const extractWaybillsFromResponse = useCallback((data, operationType = '') => {
+    console.log(`🔍 Extracting waybills for ${operationType}:`, data);
     let waybills = [];
-    const isLargeDataset = Array.isArray(data.data) && data.data.length > 3;
     
-    if (!isLargeDataset) console.log('🔍 === Extracting Waybills from Response ===');
+    // Handle different response structures more systematically
+    if (!data || !data.data) {
+      console.warn('No data found in response');
+      return [];
+    }
+
+    const responseData = data.data;
+    console.log(`📊 Response data structure for ${operationType}:`, responseData);
+    console.log(`📊 Is responseData array?`, Array.isArray(responseData));
+    console.log(`📊 Response data length:`, Array.isArray(responseData) ? responseData.length : 'N/A');
     
-    if (Array.isArray(data.data)) {
-      if (!isLargeDataset) console.log('📦 Data is array with', data.data.length, 'batches');
+    // Special debugging for buyer waybills
+    if (operationType.includes('buyer')) {
+      console.log(`🟡 BUYER WAYBILLS DEBUG - Response keys:`, Object.keys(responseData || {}));
+      console.log(`🟡 BUYER WAYBILLS DEBUG - First level inspection:`, JSON.stringify(responseData, null, 2).substring(0, 1000));
+    }
+    
+    // 🚨 SIMPLIFIED ROBUST EXTRACTION - finds ALL waybills without complex logic
+    const extractWaybillsRecursively = (obj, path = '', depth = 0) => {
+      if (depth > 10) return []; // Prevent infinite recursion
       
-      // OPTIMIZED: Use for loop instead of forEach for better performance
-      for (let batchIndex = 0; batchIndex < data.data.length; batchIndex++) {
-        const batch = data.data[batchIndex];
-        
-        if (batch.WAYBILL_LIST && batch.WAYBILL_LIST.WAYBILL) {
-          const batchWaybills = Array.isArray(batch.WAYBILL_LIST.WAYBILL) 
-            ? batch.WAYBILL_LIST.WAYBILL 
-            : [batch.WAYBILL_LIST.WAYBILL];
-          
-          if (!isLargeDataset) console.log(`📊 Batch ${batchIndex + 1} contains ${batchWaybills.length} waybills`);
-          
-          // OPTIMIZED: Use spread operator for better performance than concat
-          waybills.push(...batchWaybills);
-        } else if (batch.ID || batch.id) {
-          if (!isLargeDataset) console.log(`📄 Batch ${batchIndex + 1} is a single waybill`);
-          waybills.push(batch);
-        } else if (!isLargeDataset) {
-          console.warn(`⚠️ Batch ${batchIndex + 1} has unknown structure:`, Object.keys(batch));
+      let found = [];
+      
+      if (!obj || typeof obj !== 'object') return found;
+      
+      // Direct waybill detection - enhanced for all waybill types
+      if ((obj.ID || obj.id) && (
+        obj.FULL_AMOUNT || obj.full_amount || 
+        obj.BUYER_TIN || obj.buyer_tin || 
+        obj.SELLER_TIN || obj.seller_tin ||
+        obj.AMOUNT || obj.amount ||
+        obj.TOTAL_AMOUNT || obj.total_amount ||
+        obj.STATUS || obj.status
+      )) {
+        console.log(`🎯 Found direct waybill at ${path}: ID=${obj.ID || obj.id}, Type=${operationType}`);
+        found.push(obj);
+      }
+      
+      // WAYBILL_LIST patterns
+      if (obj.WAYBILL_LIST && obj.WAYBILL_LIST.WAYBILL) {
+        const wbList = Array.isArray(obj.WAYBILL_LIST.WAYBILL) 
+          ? obj.WAYBILL_LIST.WAYBILL 
+          : [obj.WAYBILL_LIST.WAYBILL];
+        console.log(`🎯 Found WAYBILL_LIST at ${path}: ${wbList.length} waybills`);
+        found = found.concat(wbList);
+      }
+      
+      // Direct WAYBILL patterns
+      if (obj.WAYBILL) {
+        const wbList = Array.isArray(obj.WAYBILL) ? obj.WAYBILL : [obj.WAYBILL];
+        console.log(`🎯 Found direct WAYBILL at ${path}: ${wbList.length} waybills`);
+        found = found.concat(wbList);
+      }
+      
+      // BUYER_WAYBILL patterns 
+      if (obj.BUYER_WAYBILL) {
+        const wbList = Array.isArray(obj.BUYER_WAYBILL) ? obj.BUYER_WAYBILL : [obj.BUYER_WAYBILL];
+        console.log(`🎯 Found BUYER_WAYBILL at ${path}: ${wbList.length} waybills`);
+        found = found.concat(wbList);
+      }
+      
+      // PURCHASE_WAYBILL patterns
+      if (obj.PURCHASE_WAYBILL) {
+        const wbList = Array.isArray(obj.PURCHASE_WAYBILL) ? obj.PURCHASE_WAYBILL : [obj.PURCHASE_WAYBILL];
+        console.log(`🎯 Found PURCHASE_WAYBILL at ${path}: ${wbList.length} waybills`);
+        found = found.concat(wbList);
+      }
+      
+      // RESULT patterns - always process recursively
+      if (obj.RESULT && Array.isArray(obj.RESULT)) {
+        console.log(`🎯 Found RESULT array at ${path}: ${obj.RESULT.length} items`);
+        for (let i = 0; i < obj.RESULT.length; i++) {
+          found = found.concat(extractWaybillsRecursively(obj.RESULT[i], `${path}.RESULT[${i}]`, depth + 1));
         }
       }
       
-      if (isLargeDataset) {
-        console.log(`⚡ FAST EXTRACTION: ${waybills.length} waybills from ${data.data.length} batches in ${(performance.now() - startTime).toFixed(2)}ms`);
+      // Recursive search through ALL object properties
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          found = found.concat(extractWaybillsRecursively(obj[i], `${path}[${i}]`, depth + 1));
+        }
       } else {
-        console.log(`🎯 Total waybills extracted from ${data.data.length} batches: ${waybills.length}`);
+        for (const [key, value] of Object.entries(obj)) {
+          if (value && typeof value === 'object') {
+            found = found.concat(extractWaybillsRecursively(value, path ? `${path}.${key}` : key, depth + 1));
+          }
+        }
       }
       
-    } else if (data.data.WAYBILL_LIST && data.data.WAYBILL_LIST.WAYBILL) {
-      if (!isLargeDataset) console.log('📋 Single WAYBILL_LIST structure');
-      waybills = Array.isArray(data.data.WAYBILL_LIST.WAYBILL) ? data.data.WAYBILL_LIST.WAYBILL : [data.data.WAYBILL_LIST.WAYBILL];
-    } else if (data.data.RESULT) {
-      if (!isLargeDataset) console.log('📋 RESULT wrapper');
-      waybills = Array.isArray(data.data.RESULT) ? data.data.RESULT : [data.data.RESULT];
-    } else if (data.data.result) {
-      if (!isLargeDataset) console.log('📋 result wrapper');
-      waybills = Array.isArray(data.data.result) ? data.data.result : [data.data.result];
-    } else if (data.data.waybills) {
-      if (!isLargeDataset) console.log('📋 waybills wrapper');
-      waybills = Array.isArray(data.data.waybills) ? data.data.waybills : [data.data.waybills];
-    } else if (data.data.ID || data.data.id) {
-      if (!isLargeDataset) console.log('📋 Single waybill object');
-      waybills = [data.data];
-    } else {
-      if (!isLargeDataset) console.log('📋 Unknown structure, trying to find waybills...');
-      const possibleWaybills = Object.values(data.data).find(value => 
-        Array.isArray(value) || (value && typeof value === 'object' && (value.ID || value.id))
-      );
-      if (possibleWaybills) {
-        waybills = Array.isArray(possibleWaybills) ? possibleWaybills : [possibleWaybills];
-      }
-    }
-
-    // OPTIMIZED: Pre-process amounts with faster field access
-    const processStart = performance.now();
-    for (let i = 0; i < waybills.length; i++) {
-      const wb = waybills[i];
-      waybills[i] = {
-        ...wb,
-        normalizedAmount: parseFloat(
-          wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || wb.TotalAmount || wb.total_amount || wb.amount || wb.AMOUNT || 0
-        ) || 0,
-      };
-    }
-
-    const totalTime = performance.now() - startTime;
-    if (isLargeDataset || waybills.length > 200) {
-      console.log(`⚡ OPTIMIZED EXTRACTION: ${waybills.length} waybills processed in ${totalTime.toFixed(2)}ms (${(waybills.length / totalTime * 1000).toFixed(0)} waybills/sec)`);
-    } else {
-      console.log(`✅ Final extraction result: ${waybills.length} waybills with normalized amounts`);
-    }
+      return found;
+    };
     
+    // Start comprehensive extraction
+    waybills = extractWaybillsRecursively(responseData, 'data');
+    
+    console.log(`✅ COMPREHENSIVE EXTRACTION for ${operationType}:`);
+    console.log(`   Total waybills found: ${waybills.length}`);
+    
+    // Deduplicate waybills by ID to avoid counting the same waybill multiple times
+    const waybillMap = new Map();
+    const deduplicatedWaybills = [];
+    
+    waybills.forEach((wb, index) => {
+      const id = wb.ID || wb.id || `unknown_${index}`;
+      if (!waybillMap.has(id)) {
+        waybillMap.set(id, wb);
+        deduplicatedWaybills.push(wb);
+      } else {
+        console.log(`⚠️ Duplicate waybill removed: ID=${id}`);
+      }
+    });
+    
+    waybills = deduplicatedWaybills;
+    console.log(`✅ After deduplication: ${waybills.length} unique waybills`);
+    
+    // Validate waybills structure
+    if (!Array.isArray(waybills)) {
+      console.error('❌ Extracted waybills is not an array:', waybills);
+      return [];
+    }
+
+    // Pre-process: Normalize amounts once with detailed logging
+    waybills = waybills.map((wb, index) => {
+      if (!wb || typeof wb !== 'object') {
+        console.warn(`Invalid waybill at index ${index}:`, wb);
+        return { normalizedAmount: 0 };
+      }
+      
+      // ENHANCED: Try multiple field variations for amount extraction with priority order
+      const possibleAmountFields = [
+        // RS.ge standard fields (highest priority)
+        'FULL_AMOUNT', 'full_amount', 'FullAmount', 'fullAmount',
+        'TOTAL_AMOUNT', 'total_amount', 'totalAmount', 'TotalAmount', 
+        
+        // Common amount variations
+        'AMOUNT_LARI', 'amount_lari', 'AmountLari', 'amountLari',
+        'NET_AMOUNT', 'net_amount', 'NetAmount', 'netAmount',
+        'GROSS_AMOUNT', 'gross_amount', 'GrossAmount', 'grossAmount',
+        
+        // Generic amount fields
+        'amount', 'AMOUNT', 'Amount',
+        'SUM', 'sum', 'Sum', 'SUMA', 'suma', 'Suma',
+        'VALUE', 'value', 'Value', 'VALUE_LARI', 'value_lari',
+        
+        // Alternative patterns
+        'PRICE', 'price', 'Price', 'TOTAL_PRICE', 'total_price',
+        'COST', 'cost', 'Cost', 'TOTAL_COST', 'total_cost'
+      ];
+      
+      let amount = 0;
+      let usedField = null;
+      
+      for (const field of possibleAmountFields) {
+        if (wb[field] !== undefined && wb[field] !== null && wb[field] !== '') {
+          const parsed = parseFloat(wb[field]);
+          if (!isNaN(parsed)) {
+            amount = parsed;
+            usedField = field;
+            break;
+          }
+        }
+      }
+      
+      // Log first few waybills for debugging
+      if (index < 3) {
+        console.log(`${operationType} Waybill [${index}]:`);
+        console.log('  ID:', wb.ID || wb.id || 'N/A');
+        console.log('  Amount field used:', usedField);
+        console.log('  Amount value:', amount);
+        console.log('  Available fields:', Object.keys(wb).filter(key => 
+          key.toLowerCase().includes('amount') || 
+          key.toLowerCase().includes('sum') || 
+          key.toLowerCase().includes('total') ||
+          key.toLowerCase().includes('value')
+        ));
+      }
+      
+      return {
+        ...wb,
+        normalizedAmount: amount,
+        _debug: { usedField, originalValue: wb[usedField] }
+      };
+    });
+
     return waybills;
   }, []);
 
-  // Calculate raw count matching all extraction cases - HANDLES BATCHES - OPTIMIZED
-  const calculateRawCount = useCallback((data) => {
-    const isLargeDataset = Array.isArray(data.data) && data.data.length > 3;
-    if (!isLargeDataset) console.log('🔢 === Calculating Raw Count ===');
+  // Calculate raw count using the same comprehensive extraction logic
+  const calculateRawCount = useCallback((data, operationType = '') => {
+    if (!data || !data.data) return 0;
     
-    if (Array.isArray(data.data)) {
-      if (!isLargeDataset) console.log('📦 Data is array with', data.data.length, 'batches');
+    console.log(`🔢 Calculating comprehensive raw count for ${operationType}`);
+    
+    // SIMPLIFIED COUNT - matches extraction logic exactly
+    const countWaybillsRecursively = (obj, depth = 0) => {
+      if (depth > 10) return 0; // Prevent infinite recursion
       
-      // OPTIMIZED: Fast counting without detailed logging for large datasets
-      let totalCount = 0;
-      for (let i = 0; i < data.data.length; i++) {
-        const batch = data.data[i];
-        if (batch.WAYBILL_LIST && batch.WAYBILL_LIST.WAYBILL) {
-          const batchCount = Array.isArray(batch.WAYBILL_LIST.WAYBILL) 
-            ? batch.WAYBILL_LIST.WAYBILL.length 
-            : 1;
-          if (!isLargeDataset) console.log(`📊 Batch ${i + 1} count: ${batchCount}`);
-          totalCount += batchCount;
-        } else if (batch.ID || batch.id) {
-          if (!isLargeDataset) console.log(`📄 Batch ${i + 1} is single waybill`);
-          totalCount += 1;
+      let count = 0;
+      
+      if (!obj || typeof obj !== 'object') return count;
+      
+      // Direct waybill detection - enhanced for all waybill types
+      if ((obj.ID || obj.id) && (
+        obj.FULL_AMOUNT || obj.full_amount || 
+        obj.BUYER_TIN || obj.buyer_tin || 
+        obj.SELLER_TIN || obj.seller_tin ||
+        obj.AMOUNT || obj.amount ||
+        obj.TOTAL_AMOUNT || obj.total_amount ||
+        obj.STATUS || obj.status
+      )) {
+        count += 1;
+      }
+      
+      // WAYBILL_LIST patterns
+      if (obj.WAYBILL_LIST && obj.WAYBILL_LIST.WAYBILL) {
+        const wbCount = Array.isArray(obj.WAYBILL_LIST.WAYBILL) 
+          ? obj.WAYBILL_LIST.WAYBILL.length 
+          : 1;
+        count += wbCount;
+      }
+      
+      // Direct WAYBILL patterns
+      if (obj.WAYBILL) {
+        const wbCount = Array.isArray(obj.WAYBILL) ? obj.WAYBILL.length : 1;
+        count += wbCount;
+      }
+      
+      // BUYER_WAYBILL patterns
+      if (obj.BUYER_WAYBILL) {
+        const wbCount = Array.isArray(obj.BUYER_WAYBILL) ? obj.BUYER_WAYBILL.length : 1;
+        count += wbCount;
+      }
+      
+      // PURCHASE_WAYBILL patterns
+      if (obj.PURCHASE_WAYBILL) {
+        const wbCount = Array.isArray(obj.PURCHASE_WAYBILL) ? obj.PURCHASE_WAYBILL.length : 1;
+        count += wbCount;
+      }
+      
+      // RESULT patterns - always process recursively
+      if (obj.RESULT && Array.isArray(obj.RESULT)) {
+        for (let i = 0; i < obj.RESULT.length; i++) {
+          count += countWaybillsRecursively(obj.RESULT[i], depth + 1);
         }
       }
       
-      if (isLargeDataset) {
-        console.log(`⚡ FAST COUNT: ${totalCount} waybills across ${data.data.length} batches`);
+      // Recursive search through ALL object properties
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          count += countWaybillsRecursively(obj[i], depth + 1);
+        }
       } else {
-        console.log(`🎯 Total count across all batches: ${totalCount}`);
+        for (const [key, value] of Object.entries(obj)) {
+          if (value && typeof value === 'object') {
+            count += countWaybillsRecursively(value, depth + 1);
+          }
+        }
       }
-      return totalCount;
       
-    } else if (data.data.WAYBILL_LIST && data.data.WAYBILL_LIST.WAYBILL) {
-      const count = Array.isArray(data.data.WAYBILL_LIST.WAYBILL) ? data.data.WAYBILL_LIST.WAYBILL.length : 1;
-      if (!isLargeDataset) console.log('📋 Single WAYBILL_LIST count:', count);
       return count;
-    } else if (data.data.RESULT) {
-      const count = Array.isArray(data.data.RESULT) ? data.data.RESULT.length : 1;
-      if (!isLargeDataset) console.log('📋 RESULT count:', count);
-      return count;
-    } else if (data.data.result) {
-      const count = Array.isArray(data.data.result) ? data.data.result.length : 1;
-      if (!isLargeDataset) console.log('📋 result count:', count);
-      return count;
-    } else if (data.data.waybills) {
-      const count = Array.isArray(data.data.waybills) ? data.data.waybills.length : 1;
-      if (!isLargeDataset) console.log('📋 waybills count:', count);
-      return count;
-    } else if (data.data.ID || data.data.id) {
-      if (!isLargeDataset) console.log('📋 Single waybill');
-      return 1;
-    } else {
-      if (!isLargeDataset) console.log('📋 Unknown structure, trying to find arrays...');
-      const possibleWaybills = Object.values(data.data).find((value) => Array.isArray(value));
-      const count = possibleWaybills ? possibleWaybills.length : 0;
-      if (!isLargeDataset) console.log('📋 Found array count:', count);
-      return count;
-    }
+    };
+    
+    const totalCount = countWaybillsRecursively(data.data);
+    console.log(`🔢 COMPREHENSIVE COUNT for ${operationType}: ${totalCount}`);
+    return totalCount;
   }, []);
 
-  // Updated VAT calculation - uses individual VAT results
+  // Memoized VAT calculation with detailed logging
   const memoizedVATCalculation = useMemo(() => {
-    // Sales VAT comes from individual VAT calculation
-    const soldVat = individualVatData.totalVat || 0;
+    console.log('📊 VAT CALCULATION START:');
+    console.log('🔵 Sold waybills count:', soldWaybills.length);
+    console.log('🟡 Purchased waybills count:', purchasedWaybills.length);
     
-    // Purchase VAT comes from separate calculation
-    const purchasedVat = purchaseVatAmount || 0;
+    if (soldWaybills.length === 0 && purchasedWaybills.length === 0) {
+      console.log('⚠️ No waybills found - returning zero VAT');
+      return { soldVat: 0, purchasedVat: 0, netVat: 0 };
+    }
+
+    const calculate = (waybills, type) => {
+      console.log(`\n📊 ENHANCED VAT CALCULATION for ${type}:`);
+      console.log(`   📋 Total waybills to process: ${waybills.length}`);
+      
+      // Enhanced amount validation and logging
+      let totalAmount = 0;
+      let validWaybills = 0;
+      let invalidWaybills = 0;
+      let zeroAmountWaybills = 0;
+      let amountFieldsUsed = {};
+      
+      waybills.forEach((wb, index) => {
+        const amount = wb.normalizedAmount || 0;
+        const debugField = wb._debug?.usedField || 'unknown';
+        
+        // Track amount field usage
+        amountFieldsUsed[debugField] = (amountFieldsUsed[debugField] || 0) + 1;
+        
+        if (amount > 0) {
+          totalAmount += amount;
+          validWaybills++;
+        } else if (amount === 0) {
+          zeroAmountWaybills++;
+        } else {
+          invalidWaybills++;
+        }
+        
+        // Log detailed info for first 10 waybills
+        if (index < 10) {
+          console.log(`     ${type} [${index}]: ID=${wb.ID || wb.id || 'N/A'}, Amount=${amount}, Field=${debugField}`);
+        }
+        
+        // Log suspicious cases
+        if (amount > 50000) {
+          console.log(`     ⚠️ Large amount detected [${index}]: ID=${wb.ID || wb.id || 'N/A'}, Amount=${amount}`);
+        }
+      });
+      
+      const vatAmount = totalAmount * 0.18 / 1.18;
+      
+      console.log(`   📊 ${type} DETAILED BREAKDOWN:`);
+      console.log(`     ✅ Valid waybills (amount > 0): ${validWaybills}`);
+      console.log(`     ⚠️  Zero amount waybills: ${zeroAmountWaybills}`);
+      console.log(`     ❌ Invalid amount waybills: ${invalidWaybills}`);
+      console.log(`     💰 TOTAL AMOUNT: ₾${totalAmount.toFixed(2)}`);
+      console.log(`     🏛️  VAT (18%): ₾${vatAmount.toFixed(2)}`);
+      console.log(`     📈 Amount fields used:`, amountFieldsUsed);
+      
+      // Log expected vs actual validation
+      if (type === 'SOLD' && totalAmount > 0) {
+        const expectedAmount = 2140845.18;
+        const difference = Math.abs(expectedAmount - totalAmount);
+        const percentDiff = (difference / expectedAmount * 100);
+        
+        console.log(`\n   🎯 SALES VALIDATION:`);
+        console.log(`     Expected: ₾${expectedAmount.toFixed(2)}`);
+        console.log(`     Actual:   ₾${totalAmount.toFixed(2)}`);
+        console.log(`     Difference: ₾${difference.toFixed(2)} (${percentDiff.toFixed(2)}%)`);
+        
+        if (difference > 1000) {
+          console.error(`     🚨 SIGNIFICANT DISCREPANCY DETECTED!`);
+        }
+      }
+      
+      return vatAmount;
+    };
+
+    const soldVat = calculate(soldWaybills, 'SOLD');
+    const purchasedVat = calculate(purchasedWaybills, 'PURCHASED');
+    const netVat = soldVat - purchasedVat;
     
-    console.log('🔄 === VAT SUMMARY RECALCULATION ===');
-    console.log('📊 Individual VAT data total:', individualVatData.totalVat);
-    console.log('📊 Purchase VAT amount state:', purchaseVatAmount);
-    console.log('📊 Final calculated values:', {
-      soldVat,
-      purchasedVat,
-      netVat: soldVat - purchasedVat
-    });
-    
+    console.log('\n📊 FINAL VAT CALCULATION:');
+    console.log('🔵 Sold VAT:', soldVat);
+    console.log('🟡 Purchased VAT:', purchasedVat);
+    console.log('⚖️ Net VAT:', netVat);
+    console.log('📊 VAT CALCULATION END\n');
+
     return {
       soldVat,
       purchasedVat,
-      netVat: soldVat - purchasedVat,
+      netVat,
     };
-  }, [individualVatData.totalVat, purchaseVatAmount]);
+  }, [soldWaybills, purchasedWaybills]);
 
   useEffect(() => {
     const isLarge = soldWaybills.length > 200 || purchasedWaybills.length > 200;
@@ -294,434 +502,17 @@ const RSApiManagementPage = () => {
     return () => clearTimeout(timeout);
   }, [memoizedVATCalculation]);
 
-  // Individual VAT calculation functions
-  const fetchIndividualWaybill = useCallback(async (waybillId) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/rs/get_waybill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ waybill_id: waybillId }),
-      });
+  // Debounced auto-load on date change
+  useEffect(() => {
+    if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) return;
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      
-      if (!data.success || !data.data) {
-        throw new Error(data.error || 'Failed to fetch waybill');
-      }
+    const timer = setTimeout(() => {
+      callAPI('get_waybills', { create_date_s: formatDate(startDate), create_date_e: formatEndDate(endDate), _isAutoVATCall: true });
+      setTimeout(() => callAPI('get_buyer_waybills', { create_date_s: formatDate(startDate), create_date_e: formatEndDate(endDate), _isAutoVATCall: true }), 500);
+    }, 1000);
 
-      return data.data;
-    } catch (error) {
-      console.error(`Failed to fetch waybill ${waybillId}:`, error);
-      throw error;
-    }
-  }, []);
-
-  const calculateVatFromWaybill = useCallback((waybillData) => {
-    let vatType0Total = 0;
-    
-    console.log('🧮 === STARTING VAT CALCULATION ===');
-    console.log('📋 Raw waybill data:', waybillData);
-    console.log('📋 Waybill data type:', typeof waybillData);
-    console.log('📋 Waybill data keys:', Object.keys(waybillData || {}));
-    
-    // Extract the actual WAYBILL object from various response structures
-    let actualWaybill = waybillData;
-    
-    // Handle API response structure: response.data.WAYBILL or response.WAYBILL
-    if (waybillData.WAYBILL) {
-      console.log('📦 Found WAYBILL wrapper, extracting inner waybill');
-      actualWaybill = waybillData.WAYBILL;
-    } else if (waybillData.data?.WAYBILL) {
-      console.log('📦 Found data.WAYBILL structure, extracting inner waybill');
-      actualWaybill = waybillData.data.WAYBILL;
-    }
-    
-    console.log('🎯 Actual waybill object:', actualWaybill);
-    console.log('🎯 Actual waybill keys:', Object.keys(actualWaybill || {}));
-    console.log('🎯 Waybill ID:', actualWaybill?.ID || actualWaybill?.id || 'Unknown');
-    
-    // Extract products from various possible structures
-    let products = [];
-    
-    // Handle the actual XML response structure: GOODS_LIST.GOODS
-    if (actualWaybill?.GOODS_LIST?.GOODS) {
-      products = Array.isArray(actualWaybill.GOODS_LIST.GOODS) 
-        ? actualWaybill.GOODS_LIST.GOODS 
-        : [actualWaybill.GOODS_LIST.GOODS];
-      console.log('✅ Found GOODS_LIST.GOODS structure with', products.length, 'products');
-      console.log('📦 GOODS_LIST structure:', actualWaybill.GOODS_LIST);
-    }
-    // Fallback to previous structures for compatibility
-    else if (actualWaybill?.PRODUCTS?.PRODUCT) {
-      products = Array.isArray(actualWaybill.PRODUCTS.PRODUCT) 
-        ? actualWaybill.PRODUCTS.PRODUCT 
-        : [actualWaybill.PRODUCTS.PRODUCT];
-      console.log('✅ Found PRODUCTS.PRODUCT structure with', products.length, 'products');
-    } else if (actualWaybill?.products) {
-      products = Array.isArray(actualWaybill.products) 
-        ? actualWaybill.products 
-        : [actualWaybill.products];
-      console.log('✅ Found products structure with', products.length, 'products');
-    } else {
-      console.log('❌ No recognized product structure found!');
-      console.log('🔍 Available keys in actualWaybill:', Object.keys(actualWaybill || {}));
-      
-      // Try to find any potential product data
-      Object.keys(actualWaybill || {}).forEach(key => {
-        const value = actualWaybill[key];
-        console.log(`🔍 Key '${key}':`, {
-          type: typeof value,
-          isArray: Array.isArray(value),
-          keys: typeof value === 'object' && value ? Object.keys(value) : 'N/A'
-        });
-      });
-    }
-
-    console.log('📋 Final products array:', products);
-    console.log('📋 Products array length:', products.length);
-
-    if (products.length === 0) {
-      console.log('⚠️ No products found to process!');
-      const result = {
-        vatType0Total: 0,
-        vatAmount: 0,
-        productsCount: 0,
-        vatType0ProductsCount: 0
-      };
-      console.log('💰 Empty VAT calculation result:', result);
-      return result;
-    }
-
-    // Calculate VAT for products with VAT_TYPE = 0
-    products.forEach((product, index) => {
-      // More robust parsing - handle both string and number values
-      const rawVatType = product.VAT_TYPE || product.vat_type || 0;
-      const rawAmount = product.AMOUNT || product.Amount || product.amount || 0;
-      
-      console.log(`🔍 Raw values for Product ${index + 1}:`, {
-        rawVatType,
-        rawVatTypeType: typeof rawVatType,
-        rawAmount,
-        rawAmountType: typeof rawAmount
-      });
-      
-      // Parse VAT_TYPE - handle string "0" vs number 0
-      let vatType;
-      if (typeof rawVatType === 'string') {
-        vatType = parseInt(rawVatType.trim(), 10);
-      } else {
-        vatType = parseInt(rawVatType, 10) || 0;
-      }
-      
-      // Parse AMOUNT - handle string "520" vs number 520
-      let amount;
-      if (typeof rawAmount === 'string') {
-        amount = parseFloat(rawAmount.trim());
-      } else {
-        amount = parseFloat(rawAmount) || 0;
-      }
-      
-      // Fallback to 0 if parsing failed
-      if (isNaN(vatType)) vatType = 999; // Use 999 to easily identify parsing issues
-      if (isNaN(amount)) amount = 0;
-      
-      console.log(`🔍 Product ${index + 1} parsed:`, {
-        name: product.W_NAME || product.name,
-        rawVatType,
-        parsedVatType: vatType,
-        vatTypeIsZero: vatType === 0,
-        rawAmount,
-        parsedAmount: amount,
-        amountIsPositive: amount > 0,
-        willContribute: vatType === 0 && amount > 0
-      });
-      
-      if (vatType === 0 && amount > 0) {
-        console.log(`✅ Product contributes: +₾${amount} (Total will be: ₾${vatType0Total + amount})`);
-        vatType0Total += amount;
-      } else {
-        console.log(`❌ Product excluded:`, {
-          vatType: vatType,
-          amount: amount,
-          reason: vatType !== 0 ? `VAT_TYPE=${vatType}≠0` : `amount=${amount}≤0`
-        });
-      }
-      
-      console.log(`💰 Current VAT Type 0 total: ₾${vatType0Total}`);
-    });
-
-    // DON'T calculate VAT here - just return the VAT Type 0 total amount
-    // VAT calculation will be done once on the aggregated total
-    
-    const result = {
-      vatType0Total,
-      productsCount: products.length,
-      vatType0ProductsCount: products.filter(p => parseInt(p.VAT_TYPE || p.vat_type || 0) === 0).length
-    };
-    
-    console.log('🎯 === WAYBILL PROCESSING RESULT ===');
-    console.log('🆔 Waybill ID:', actualWaybill?.ID || actualWaybill?.id || 'Unknown');
-    console.log('💰 VAT Type 0 Total Amount: ₾' + vatType0Total.toFixed(2));
-    console.log('📊 Total Products: ' + result.productsCount);
-    console.log('📊 VAT Type 0 Products: ' + result.vatType0ProductsCount);
-    console.log('📋 Result for aggregation:', result);
-    
-    return result;
-  }, []);
-
-  const processWaybillsForIndividualVat = useCallback(async () => {
-    console.log('🚀 === STARTING CORRECTED VAT PROCESSING ===');
-    
-    // STEP 1: Filter only SALES waybills (not purchases)
-    const salesWaybills = soldWaybills.filter(wb => {
-      const status = parseInt(wb.STATUS || wb.status || 0);
-      const waybillId = wb.ID || wb.id || wb.waybill_id || wb.WAYBILL_ID;
-      
-      console.log(`📋 Sales waybill ${waybillId}: STATUS=${status}, include=${status !== -2}`);
-      return status !== -2; // Exclude waybills with STATUS = -2
-    });
-    
-    console.log('💰 Total sales waybills:', soldWaybills.length);
-    console.log('✅ Sales waybills after filtering (STATUS != -2):', salesWaybills.length);
-    console.log('🛒 Purchased waybills (EXCLUDED):', purchasedWaybills.length);
-    
-    if (salesWaybills.length === 0) {
-      setIndividualVatData(prev => ({ ...prev, error: 'No valid sales waybills to process' }));
-      return;
-    }
-
-    setIndividualVatData(prev => ({ ...prev, loading: true, error: null, processedWaybills: [] }));
-    
-    try {
-      let totalVatType0Amount = 0; // Total amount for VAT calculation
-      const processedWaybills = [];
-
-      // STEP 2: Process each sales waybill to get VAT Type 0 amounts
-      const batchSize = 3;
-      for (let i = 0; i < salesWaybills.length; i += batchSize) {
-        const batch = salesWaybills.slice(i, i + batchSize);
-        console.log(`🔄 Processing batch ${Math.floor(i/batchSize) + 1}: ${batch.length} waybills`);
-        
-        const batchPromises = batch.map(async (waybill) => {
-          const waybillId = waybill.ID || waybill.id || waybill.waybill_id || waybill.WAYBILL_ID;
-          
-          try {
-            const waybillData = await fetchIndividualWaybill(waybillId);
-            const vatInfo = calculateVatFromWaybill(waybillData);
-            
-            console.log(`✅ Waybill ${waybillId}: VAT Type 0 amount = ₾${vatInfo.vatType0Total}`);
-            
-            return {
-              waybillId,
-              vatType0Amount: vatInfo.vatType0Total, // Only store the amount, not calculated VAT
-              productsCount: vatInfo.productsCount,
-              vatType0ProductsCount: vatInfo.vatType0ProductsCount,
-              success: true
-            };
-          } catch (error) {
-            console.error(`❌ Failed waybill ${waybillId}:`, error.message);
-            return {
-              waybillId,
-              error: error.message,
-              success: false,
-              vatType0Amount: 0
-            };
-          }
-        });
-
-        const batchResults = await Promise.all(batchPromises);
-        processedWaybills.push(...batchResults);
-        
-        // STEP 3: Accumulate VAT Type 0 amounts (don't calculate VAT per waybill)
-        const batchVatType0Amount = batchResults
-          .filter(r => r.success)
-          .reduce((sum, r) => sum + r.vatType0Amount, 0);
-        
-        totalVatType0Amount += batchVatType0Amount;
-        
-        console.log(`📊 Batch VAT Type 0 total: ₾${batchVatType0Amount}`);
-        console.log(`💰 Running VAT Type 0 total: ₾${totalVatType0Amount}`);
-        
-        setIndividualVatData(prev => ({
-          ...prev,
-          processedWaybills: [...prev.processedWaybills, ...batchResults]
-        }));
-        
-        // Small delay between batches
-        if (i + batchSize < salesWaybills.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-      }
-      
-      // STEP 4: Apply VAT formula ONCE to the total amount
-      const finalVatAmount = (totalVatType0Amount / 1.18) * 0.18;
-      
-      console.log('🎯 === FINAL CORRECTED VAT CALCULATION ===');
-      console.log(`💰 Total VAT Type 0 Amount: ₾${totalVatType0Amount.toFixed(2)}`);
-      console.log(`💰 Final VAT Amount: ₾${finalVatAmount.toFixed(2)}`);
-      console.log(`📊 Processed waybills: ${processedWaybills.filter(r => r.success).length}/${processedWaybills.length}`);
-      
-      setIndividualVatData(prev => ({ 
-        ...prev, 
-        loading: false,
-        totalVat: finalVatAmount
-      }));
-      
-    } catch (error) {
-      console.error('❌ VAT processing failed:', error);
-      setIndividualVatData(prev => ({ 
-        ...prev, 
-        loading: false, 
-        error: error.message 
-      }));
-    }
-  }, [soldWaybills, purchasedWaybills, fetchIndividualWaybill, calculateVatFromWaybill]);
-
-  // Calculate purchase VAT (similar to sales VAT)
-  const calculatePurchaseVat = useCallback(async () => {
-    console.log('🛒 === CALCULATING PURCHASE VAT - DEBUG MODE ===');
-    console.log('🛒 Raw purchased waybills array:', purchasedWaybills);
-    console.log('🛒 Purchased waybills length:', purchasedWaybills.length);
-    
-    if (purchasedWaybills.length > 0) {
-      console.log('🛒 First purchase waybill sample:', purchasedWaybills[0]);
-      console.log('🛒 Purchase waybill keys:', Object.keys(purchasedWaybills[0] || {}));
-    }
-    
-    // Filter purchase waybills with status != -2
-    const validPurchaseWaybills = purchasedWaybills.filter(wb => {
-      const rawStatus = wb.STATUS || wb.status || wb.Status;
-      const status = parseInt(rawStatus || 0);
-      const waybillId = wb.ID || wb.id || wb.waybill_id || wb.WAYBILL_ID;
-      
-      console.log(`📋 Purchase waybill ${waybillId}:`, {
-        rawStatus,
-        parsedStatus: status,
-        STATUS: wb.STATUS,
-        status: wb.status,
-        Status: wb.Status,
-        include: status !== -2,
-        allKeys: Object.keys(wb)
-      });
-      
-      return status !== -2;
-    });
-    
-    console.log('🛒 Total purchase waybills:', purchasedWaybills.length);
-    console.log('✅ Valid purchase waybills (STATUS != -2):', validPurchaseWaybills.length);
-    console.log('🛒 Valid purchase waybills array:', validPurchaseWaybills);
-    
-    if (validPurchaseWaybills.length === 0) {
-      return 0;
-    }
-
-    try {
-      let totalPurchaseVatType0Amount = 0;
-
-      // Process purchase waybills in batches
-      const batchSize = 3;
-      console.log(`🛒 Starting batch processing of ${validPurchaseWaybills.length} purchase waybills`);
-      
-      for (let i = 0; i < validPurchaseWaybills.length; i += batchSize) {
-        const batch = validPurchaseWaybills.slice(i, i + batchSize);
-        console.log(`🛒 Processing batch ${Math.floor(i/batchSize) + 1}: ${batch.length} waybills`);
-        
-        const batchPromises = batch.map(async (waybill) => {
-          const waybillId = waybill.ID || waybill.id || waybill.waybill_id || waybill.WAYBILL_ID;
-          
-          console.log(`🛒 Processing purchase waybill ${waybillId}...`);
-          
-          try {
-            const waybillData = await fetchIndividualWaybill(waybillId);
-            console.log(`🛒 Fetched data for ${waybillId}:`, waybillData);
-            
-            const vatInfo = calculateVatFromWaybill(waybillData);
-            console.log(`🛒 VAT info for ${waybillId}:`, vatInfo);
-            
-            console.log(`🛒 Purchase waybill ${waybillId}: VAT Type 0 amount = ₾${vatInfo.vatType0Total}`);
-            return vatInfo.vatType0Total || 0;
-          } catch (error) {
-            console.error(`❌ Failed purchase waybill ${waybillId}:`, error.message);
-            console.error(`❌ Error stack:`, error.stack);
-            return 0;
-          }
-        });
-
-        const batchResults = await Promise.all(batchPromises);
-        console.log(`🛒 Batch results:`, batchResults);
-        
-        const batchTotal = batchResults.reduce((sum, amount) => sum + amount, 0);
-        totalPurchaseVatType0Amount += batchTotal;
-        
-        console.log(`🛒 Batch purchase VAT Type 0 total: ₾${batchTotal}`);
-        console.log(`🛒 Running total purchase VAT Type 0: ₾${totalPurchaseVatType0Amount}`);
-        
-        // Small delay between batches
-        if (i + batchSize < validPurchaseWaybills.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-      }
-      
-      // Apply VAT formula to purchase total
-      const purchaseVatAmount = (totalPurchaseVatType0Amount / 1.18) * 0.18;
-      
-      console.log('🛒 === PURCHASE VAT CALCULATION COMPLETE ===');
-      console.log(`💰 Total Purchase VAT Type 0 Amount: ₾${totalPurchaseVatType0Amount.toFixed(2)}`);
-      console.log(`💰 Purchase VAT Amount: ₾${purchaseVatAmount.toFixed(2)}`);
-      
-      return purchaseVatAmount;
-      
-    } catch (error) {
-      console.error('❌ Purchase VAT calculation failed:', error);
-      return 0;
-    }
-  }, [purchasedWaybills, fetchIndividualWaybill, calculateVatFromWaybill]);
-
-  // Extract waybill IDs from loaded waybills
-  const extractWaybillIds = useCallback(() => {
-    console.log('🔍 === EXTRACTING WAYBILL IDs ===');
-    console.log('👥 Sold waybills count:', soldWaybills.length);
-    console.log('🛒 Purchased waybills count:', purchasedWaybills.length);
-    
-    if (soldWaybills.length > 0) {
-      console.log('👥 First sold waybill sample:', soldWaybills[0]);
-      console.log('👥 Sold waybill keys:', Object.keys(soldWaybills[0] || {}));
-    }
-    
-    if (purchasedWaybills.length > 0) {
-      console.log('🛒 First purchased waybill sample:', purchasedWaybills[0]);
-      console.log('🛒 Purchased waybill keys:', Object.keys(purchasedWaybills[0] || {}));
-    }
-    
-    const allWaybills = [...soldWaybills, ...purchasedWaybills];
-    console.log('📦 Total waybills to process:', allWaybills.length);
-    
-    const waybillIds = allWaybills.map((wb, index) => {
-      const id = wb.ID || wb.id || wb.waybill_id || wb.WAYBILL_ID;
-      console.log(`📋 Waybill ${index + 1}:`, {
-        id,
-        availableFields: Object.keys(wb),
-        ID: wb.ID,
-        id: wb.id,
-        waybill_id: wb.waybill_id,
-        WAYBILL_ID: wb.WAYBILL_ID
-      });
-      return id;
-    }).filter(Boolean);
-    
-    console.log('🎯 Extracted waybill IDs:', waybillIds);
-    
-    setIndividualVatData(prev => ({
-      ...prev,
-      waybillIds,
-      processedWaybills: [],
-      totalVat: 0,
-      error: null
-    }));
-    
-    console.log(`✅ Successfully extracted ${waybillIds.length} waybill IDs for individual VAT calculation`);
-  }, [soldWaybills, purchasedWaybills]);
+    return () => clearTimeout(timer);
+  }, [startDate, endDate]);
 
   // API call with cache, abort, validation
   const callAPI = useCallback(async (operation, params = {}) => {
@@ -734,12 +525,9 @@ const RSApiManagementPage = () => {
       return;
     }
 
-    const cacheKey = `${operation}_${params.create_date_s || 'no-start'}_${params.create_date_e || 'no-end'}`;
-    console.log('🔑 Cache key:', cacheKey);
-    console.log('🗂️ Cache has key:', !!apiCache[cacheKey]);
-    
+    const cacheKey = `${operation}_${params.create_date_s || ''}_${params.create_date_e || ''}`;
     if (apiCache[cacheKey]) {
-      console.log('📦 Using cached data for', operation);
+      // Use cache
       handleApiResponse(operation, apiCache[cacheKey], params._isAutoVATCall);
       return;
     }
@@ -764,10 +552,7 @@ const RSApiManagementPage = () => {
       const data = await response.json();
 
       // Cache if list operation
-      if (operation === 'get_waybills' || operation === 'get_buyer_waybills') {
-        console.log('💾 Caching data for key:', cacheKey);
-        setApiCache((prev) => ({ ...prev, [cacheKey]: data }));
-      }
+      if (operation === 'get_waybills' || operation === 'get_buyer_waybills') setApiCache((prev) => ({ ...prev, [cacheKey]: data }));
 
       handleApiResponse(operation, data, _isAutoVATCall);
     } catch (err) {
@@ -778,161 +563,81 @@ const RSApiManagementPage = () => {
     }
 
     return () => controller.abort();
-  }, [tin, userId]); // Dependencies include validated fields (removed apiCache to prevent infinite loop)
+  }, [apiCache, tin, userId]); // Dependencies include validated fields
 
-  // Debounced auto-load on date change (moved after callAPI definition)
-  useEffect(() => {
-    if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) return;
-
-    console.log('🔄 === Date Change Effect Triggered ===');
-    console.log('Start date:', startDate);
-    console.log('End date:', endDate);
-    
-    // Check if dates actually changed
-    const prevDates = prevDatesRef.current;
-    const datesChanged = prevDates.startDate !== startDate || prevDates.endDate !== endDate;
-    
-    if (datesChanged) {
-      console.log('📅 Dates changed - clearing cache');
-      console.log('Previous:', prevDates);
-      console.log('New:', { startDate, endDate });
-      setApiCache({});
-      
-      // Update the ref with new dates
-      prevDatesRef.current = { startDate, endDate };
-    } else {
-      console.log('📅 Dates unchanged - keeping cache');
+  const handleApiResponse = (operation, data, isAutoVATCall) => {
+    // Always update main results for non-waybill operations
+    if (operation !== 'get_waybills' && operation !== 'get_buyer_waybills') {
+      dispatch({ type: 'SET_RESULTS', payload: data });
     }
     
-    const timer = setTimeout(() => {
-      console.log('⏰ Auto-loading waybills for date range');
-      callAPI('get_waybills', { create_date_s: formatDate(startDate), create_date_e: formatEndDate(endDate), _isAutoVATCall: true });
-      setTimeout(() => callAPI('get_buyer_waybills', { create_date_s: formatDate(startDate), create_date_e: formatEndDate(endDate), _isAutoVATCall: true }), 500);
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [startDate, endDate, callAPI]);
-
-  // Auto-extract waybill IDs when waybills are loaded
-  useEffect(() => {
-    console.log('🔄 === WAYBILLS CHANGED - AUTO-EXTRACT TRIGGER ===');
-    console.log('👥 Sold waybills count:', soldWaybills.length);
-    console.log('🛒 Purchased waybills count:', purchasedWaybills.length);
-    
-    if (soldWaybills.length > 0 || purchasedWaybills.length > 0) {
-      console.log('✅ Waybills available, triggering auto-extract');
-      extractWaybillIds();
-    } else {
-      console.log('❌ No waybills available for auto-extract');
+    // Update specific result states for waybill operations
+    if (operation === 'get_waybills') {
+      setSoldResults(data);
+      dispatch({ type: 'SET_RESULTS', payload: data }); // Show sold results in main display
+      console.log('🔵 SOLD WAYBILLS API RESPONSE:', JSON.stringify(data, null, 2));
     }
-  }, [soldWaybills, purchasedWaybills, extractWaybillIds]);
-
-  // Auto-calculate purchase VAT when purchase waybills are loaded
-  useEffect(() => {
-    if (purchasedWaybills.length > 0) {
-      console.log('🛒 Purchase waybills loaded, auto-calculating purchase VAT...');
-      calculatePurchaseVat().then(purchaseVat => {
-        setPurchaseVatAmount(purchaseVat);
-        console.log(`🛒 Auto-calculated purchase VAT: ₾${purchaseVat.toFixed(2)}`);
-      }).catch(error => {
-        console.error('❌ Auto-calculation of purchase VAT failed:', error);
-      });
+    if (operation === 'get_buyer_waybills') {
+      setPurchasedResults(data);
+      // Don't override main results - keep sold results visible for debugging
+      console.log('🟡 PURCHASED WAYBILLS API RESPONSE:', JSON.stringify(data, null, 2));
     }
-  }, [purchasedWaybills, calculatePurchaseVat]);
-
-  const handleApiResponse = async (operation, data, isAutoVATCall) => {
-    const processingStart = performance.now();
-    console.log(`🔄 === Processing ${operation} Response ===`);
-    console.log('Is auto VAT call:', isAutoVATCall);
-    console.log('📋 Raw API response data:', data);
-    console.log('📋 Data success:', data.success);
-    console.log('📋 Data keys:', Object.keys(data || {}));
-    
-    dispatch({ type: 'SET_RESULTS', payload: data });
 
     if (data.success === false) {
-      console.error(`❌ ${operation} failed:`, data.error);
       dispatch({ type: 'SET_ERROR', payload: data.error || rsApiTranslations.operationFailed });
       return;
     }
 
-    if (!data.data) {
-      console.warn(`⚠️ ${operation} returned no data`);
-      return;
-    }
+    if (!data.data) return;
 
-    // OPTIMIZED: For large datasets, show progress and use async processing
-    const isLargeDataset = Array.isArray(data.data) && data.data.length > 5;
+    const totalWaybillsInResponse = calculateRawCount(data, operation);
+    const waybills = extractWaybillsFromResponse(data, operation);
+
+    console.log(`${operation}: Raw count ${totalWaybillsInResponse}, Extracted ${waybills.length}`);
     
-    if (isLargeDataset) {
-      console.log(`⚡ Large dataset detected (${data.data.length} batches) - using async processing`);
-      
-      // Show processing indicator for large datasets
-      if (operation === 'get_waybills') {
-        setSoldWaybills([]); // Clear previous data
-      } else if (operation === 'get_buyer_waybills') {
-        setPurchasedWaybills([]);
-      }
+    if (totalWaybillsInResponse !== waybills.length) {
+      console.error(`Mismatch in ${operation}: Raw ${totalWaybillsInResponse}, Extracted ${waybills.length}`);
+      console.log('Raw response data:', data.data);
+      dispatch({ type: 'SET_ERROR', payload: `Waybill count mismatch in ${operation}: expected ${totalWaybillsInResponse}, got ${waybills.length}` });
     }
-
-    // Use setTimeout for large datasets to prevent UI blocking
-    const processAsync = () => {
-      return new Promise(resolve => {
-        setTimeout(() => {
-          const totalWaybillsInResponse = calculateRawCount(data);
-          const waybills = extractWaybillsFromResponse(data);
-
-          console.log(`📊 ${operation} results:`, {
-            totalInResponse: totalWaybillsInResponse,
-            extracted: waybills.length,
-            isMatch: totalWaybillsInResponse === waybills.length
-          });
-
-          if (totalWaybillsInResponse !== waybills.length) {
-            console.error(`❌ MISMATCH: Raw ${totalWaybillsInResponse}, Extracted ${waybills.length}`);
-            dispatch({ type: 'SET_ERROR', payload: 'Waybill count mismatch detected - check console' });
-          }
-
-          resolve(waybills);
-        }, isLargeDataset ? 10 : 0);
-      });
-    };
-
-    const waybills = await processAsync();
 
     if (operation === 'get_waybills') {
-      console.log('💰 Setting sold waybills:', waybills.length);
+      console.log('🔵 Setting sold waybills:', waybills.length);
+      console.log('🔵 First 3 sold waybills:', waybills.slice(0, 3));
+      console.log('🔵 Sold waybills amounts:', waybills.map(wb => ({ id: wb.ID || wb.id, amount: wb.normalizedAmount })).slice(0, 10));
       setSoldWaybills(waybills);
     }
     if (operation === 'get_buyer_waybills') {
-      console.log('🛒 Setting purchased waybills:', waybills.length);
+      console.log('🟡 Setting purchased waybills:', waybills.length);
+      console.log('🟡 First 3 purchased waybills:', waybills.slice(0, 3));
+      console.log('🟡 Purchased waybills amounts:', waybills.map(wb => ({ id: wb.ID || wb.id, amount: wb.normalizedAmount })).slice(0, 10));
       setPurchasedWaybills(waybills);
-    }
-
-    const totalTime = performance.now() - processingStart;
-    if (isLargeDataset) {
-      console.log(`⚡ ${operation} processing completed in ${totalTime.toFixed(2)}ms`);
     }
   };
 
   const clearResults = () => {
-    console.log('🧹 Clearing all results and cache');
     dispatch({ type: 'SET_RESULTS', payload: null });
     dispatch({ type: 'SET_ERROR', payload: '' });
     setSoldWaybills([]);
     setPurchasedWaybills([]);
+    setSoldResults(null);
+    setPurchasedResults(null);
     setVatCalculation({ soldVat: 0, purchasedVat: 0, netVat: 0 });
-    setApiCache({}); // Clear cache
   };
 
   const formatDate = (dateString) => {
     if (!dateString) return '';
-    return `${dateString}T00:00:00`;
+    // RS.ge API expects ISO date format (YYYY-MM-DD), not datetime
+    return dateString;
   };
 
   const formatEndDate = (dateString) => {
     if (!dateString) return '';
-    return `${dateString}T23:59:59`;
+    // For end dates, we want to include the entire day, so we add one day
+    // to make the range inclusive of the selected end date
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + 1);
+    return date.toISOString().split('T')[0];
   };
 
   // Sub-components with memo
@@ -980,193 +685,6 @@ const RSApiManagementPage = () => {
     </div>
   ));
 
-  // Individual VAT Summary Component
-  const IndividualVatSummary = React.memo(({ individualVatData }) => {
-    if (individualVatData.waybillIds.length === 0) {
-      return (
-        <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-          <p className="text-yellow-800 text-sm">
-            📋 ჯერ ჩატვირთეთ ზედდებულები რომ გამოვთვალოთ ინდივიდუალური დღგ
-          </p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 p-6 rounded-lg shadow-md border border-purple-200">
-        <h3 className="text-xl font-bold mb-4 text-purple-800">
-          {rsApiTranslations.individualVatCalculation}
-          {individualVatData.loading && (
-            <span className="ml-2 inline-flex items-center">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
-              <span className="ml-1 text-sm">მუშავდება...</span>
-            </span>
-          )}
-        </h3>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-            <p className="text-sm font-medium text-blue-800">{rsApiTranslations.waybillsToProcess}</p>
-            <p className="text-2xl font-bold text-blue-900">
-              {individualVatData.waybillIds.length}
-            </p>
-          </div>
-          <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-            <p className="text-sm font-medium text-green-800">დამუშავებული</p>
-            <p className="text-2xl font-bold text-green-900">
-              {individualVatData.processedWaybills.length}
-            </p>
-          </div>
-          <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200">
-            <p className="text-sm font-medium text-indigo-800">{rsApiTranslations.individualVatTotal}</p>
-            <p className="text-2xl font-bold text-indigo-900">
-              ₾{(individualVatData.totalVat || 0).toFixed(2)}
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex gap-3 mb-4">
-          <button
-            onClick={extractWaybillIds}
-            disabled={individualVatData.loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
-          >
-            {rsApiTranslations.fetchIndividualWaybills}
-          </button>
-          <button
-            onClick={processWaybillsForIndividualVat}
-            disabled={individualVatData.loading || individualVatData.waybillIds.length === 0}
-            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 transition-colors"
-          >
-            {individualVatData.loading ? 'მუშავდება...' : rsApiTranslations.processWaybillsForVat}
-          </button>
-          <button
-            onClick={async () => {
-              console.log('🧪 === DEBUG BUTTON CLICKED ===');
-              alert('🧪 Debug button clicked! Check console for logs.');
-              
-              try {
-                console.log('🧪 === DEBUG TEST - FETCHING WAYBILL 948655533 ===');
-                console.log('🧪 fetchIndividualWaybill function:', typeof fetchIndividualWaybill);
-                console.log('🧪 calculateVatFromWaybill function:', typeof calculateVatFromWaybill);
-                
-                const result = await fetchIndividualWaybill('948655533');
-                console.log('🧪 Debug test result:', result);
-                
-                const vatInfo = calculateVatFromWaybill(result);
-                console.log('🧪 Debug VAT calculation:', vatInfo);
-                
-                alert(`🧪 Test completed! VAT Type 0 Total: ₾${(vatInfo.vatType0Total || 0).toFixed(2)} from ${vatInfo.vatType0ProductsCount}/${vatInfo.productsCount} products`);
-                
-              } catch (error) {
-                console.error('🧪 Debug test failed:', error);
-                alert(`🧪 Test failed: ${error.message}`);
-              }
-            }}
-            disabled={individualVatData.loading}
-            className="px-3 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:bg-gray-400 transition-colors text-sm"
-          >
-            🧪 Test 948655533
-          </button>
-          <button
-            onClick={async () => {
-              console.log('🛒 === MANUAL PURCHASE VAT CALCULATION ===');
-              console.log('🛒 Current purchase VAT state before:', purchaseVatAmount);
-              
-              const purchaseVat = await calculatePurchaseVat();
-              console.log('🛒 Calculated purchase VAT result:', purchaseVat);
-              
-              setPurchaseVatAmount(purchaseVat);
-              console.log('🛒 Purchase VAT state should be set to:', purchaseVat);
-              
-              // Check after state update (with timeout to allow state update)
-              setTimeout(() => {
-                console.log('🛒 Purchase VAT state after update:', purchaseVatAmount);
-              }, 100);
-            }}
-            disabled={individualVatData.loading || purchasedWaybills.length === 0}
-            className="px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 transition-colors text-sm"
-          >
-            🛒 შესყიდვის დღგ
-          </button>
-          <button
-            onClick={() => {
-              console.log('🔥 === PURCHASE WAYBILLS DEBUG INFO ===');
-              console.log('🔥 Purchased waybills count:', purchasedWaybills.length);
-              console.log('🔥 Purchased waybills array:', purchasedWaybills);
-              
-              if (purchasedWaybills.length > 0) {
-                console.log('🔥 First purchase waybill:', purchasedWaybills[0]);
-                console.log('🔥 Purchase waybill status values:', purchasedWaybills.map(wb => ({
-                  id: wb.ID || wb.id,
-                  STATUS: wb.STATUS,
-                  status: wb.status,
-                  Status: wb.Status
-                })));
-              }
-              
-              alert(`🔥 Purchase Debug: Count=${purchasedWaybills.length}, Check console for details`);
-            }}
-            className="px-3 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
-          >
-            🔥 Debug Purchase
-          </button>
-          <button
-            onClick={() => {
-              console.log('🔍 === CURRENT VAT STATE DEBUG ===');
-              console.log('🔍 Individual VAT data:', individualVatData);
-              console.log('🔍 Purchase VAT amount state:', purchaseVatAmount);
-              console.log('🔍 Current VAT calculation:', vatCalculation);
-              console.log('🔍 Memoized VAT calculation:', memoizedVATCalculation);
-              
-              alert(`🔍 VAT State: Sales=₾${individualVatData.totalVat || 0}, Purchase=₾${purchaseVatAmount}, Display=₾${vatCalculation.purchasedVat}`);
-            }}
-            className="px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-sm"
-          >
-            🔍 VAT State
-          </button>
-        </div>
-        
-        {individualVatData.error && (
-          <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-4">
-            <p className="text-red-800">შეცდომა: {individualVatData.error}</p>
-          </div>
-        )}
-        
-        {individualVatData.processedWaybills.length > 0 && (
-          <div className="bg-white p-4 rounded-lg border border-gray-200">
-            <h4 className="font-semibold mb-3 text-gray-700">დეტალური ინფორმაცია:</h4>
-            <div className="max-h-60 overflow-y-auto space-y-2">
-              {individualVatData.processedWaybills.map((waybill, index) => (
-                <div key={index} className={`p-3 rounded border ${
-                  waybill.success 
-                    ? 'bg-green-50 border-green-200' 
-                    : 'bg-red-50 border-red-200'
-                }`}>
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">ID: {waybill.waybillId}</span>
-                    {waybill.success ? (
-                      <div className="text-right">
-                        <div className="text-sm text-gray-600">
-                          VAT Type 0: {waybill.vatType0ProductsCount || 0}/{waybill.productsCount || 0} პროდუქტი
-                        </div>
-                        <div className="font-bold text-green-800">
-                          ₾{(waybill.vatType0Amount || 0).toFixed(2)}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-red-600 text-sm">{waybill.error}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  });
-
   const VatSummary = React.memo(({ vatCalculation, vatLoading, soldWaybills, purchasedWaybills, startDate, endDate }) => {
     if (vatLoading) return <SkeletonLoader />;
 
@@ -1190,7 +708,10 @@ const RSApiManagementPage = () => {
               ₾{vatCalculation.soldVat.toFixed(2)}
             </p>
             <p className="text-xs text-green-600 mt-1">
-              {soldWaybills.length} ზედდებული (ALL - filter removed)
+              {soldWaybills.length} ზედდებული {soldWaybills.length === 0 ? '⚠️ ZERO!' : '✅'}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              სულ თანხა: ₾{soldWaybills.reduce((sum, wb) => sum + wb.normalizedAmount, 0).toFixed(2)}
             </p>
           </div>
           <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -1199,7 +720,10 @@ const RSApiManagementPage = () => {
               ₾{vatCalculation.purchasedVat.toFixed(2)}
             </p>
             <p className="text-xs text-blue-600 mt-1">
-              {purchasedWaybills.length} ზედდებული (ALL - filter removed)
+              {purchasedWaybills.length} ზედდებული {purchasedWaybills.length === 0 ? '⚠️ ZERO!' : '✅'}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              სულ თანხა: ₾{purchasedWaybills.reduce((sum, wb) => sum + wb.normalizedAmount, 0).toFixed(2)}
             </p>
           </div>
           <div className={`p-4 rounded-lg border ${
@@ -1238,12 +762,19 @@ const RSApiManagementPage = () => {
     );
   });
 
-  const ResultsSection = React.memo(({ loading, error, results }) => {
+  const ResultsSection = React.memo(({ loading, error, results, soldResults, purchasedResults, soldWaybills, purchasedWaybills, vatCalculation }) => {
     if (loading) return <SkeletonLoader />;
+
+    // Prioritize showing sold results for VAT debugging
+    const displayResults = soldResults || results;
+    const resultType = soldResults ? '🔵 SOLD WAYBILLS' : purchasedResults ? '🟡 PURCHASED WAYBILLS' : 'API RESPONSE';
 
     return (
       <div className="bg-white p-6 rounded-lg shadow-md border">
-        <h3 className="text-lg font-semibold mb-4 text-gray-700">{rsApiTranslations.results}</h3>
+        <h3 className="text-lg font-semibold mb-4 text-gray-700">
+          {rsApiTranslations.results} 
+          {soldResults && <span className="text-blue-600 text-sm ml-2">(Showing Sold Waybills for VAT Debugging)</span>}
+        </h3>
         {loading && (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -1255,95 +786,40 @@ const RSApiManagementPage = () => {
             <p className="text-red-800">{rsApiTranslations.error}: {error}</p>
           </div>
         )}
-        {results && (
+        
+        {/* Debug Info */}
+        {(soldResults || purchasedResults) && (
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-4 mb-4">
+            <h4 className="font-semibold text-blue-800 mb-2">DEBUG INFO:</h4>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p><strong>🔵 Sold Results:</strong> {soldResults ? '✅ Available' : '❌ None'}</p>
+                <p><strong>🔵 Sold Waybills:</strong> {soldWaybills.length}</p>
+                <p><strong>🔵 Sold VAT:</strong> ₾{vatCalculation.soldVat.toFixed(2)}</p>
+              </div>
+              <div>
+                <p><strong>🟡 Purchased Results:</strong> {purchasedResults ? '✅ Available' : '❌ None'}</p>
+                <p><strong>🟡 Purchased Waybills:</strong> {purchasedWaybills.length}</p>
+                <p><strong>🟡 Purchased VAT:</strong> ₾{vatCalculation.purchasedVat.toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {displayResults && (
           <div className="space-y-4">
-            {results.success && (
+            {displayResults.success && (
               <div className="bg-green-50 border border-green-200 rounded-md p-4">
                 <p className="text-green-800">{rsApiTranslations.success}</p>
               </div>
             )}
             <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-              <h4 className="font-semibold mb-2">{rsApiTranslations.apiResponse}:</h4>
-              
-              {/* Always show full JSON - no truncation */}
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
-                <p className="text-sm text-blue-800 font-medium">
-                  📊 JSON Size: {JSON.stringify(results).length.toLocaleString()} characters
-                </p>
-                {results.data && (
-                  <p className="text-sm text-blue-700">
-                    🔢 Waybill Count: {
-                      (() => {
-                        if (Array.isArray(results.data)) {
-                          // Handle batches
-                          let totalCount = 0;
-                          results.data.forEach((batch) => {
-                            if (batch.WAYBILL_LIST && batch.WAYBILL_LIST.WAYBILL) {
-                              totalCount += Array.isArray(batch.WAYBILL_LIST.WAYBILL) 
-                                ? batch.WAYBILL_LIST.WAYBILL.length 
-                                : 1;
-                            } else if (batch.ID || batch.id) {
-                              totalCount += 1;
-                            }
-                          });
-                          return `${totalCount} (across ${results.data.length} batches)`;
-                        } else if (results.data.WAYBILL_LIST?.WAYBILL) {
-                          return Array.isArray(results.data.WAYBILL_LIST.WAYBILL) 
-                            ? results.data.WAYBILL_LIST.WAYBILL.length 
-                            : 1;
-                        } else {
-                          return 0;
-                        }
-                      })()
-                    }
-                  </p>
-                )}
-              </div>
-              
-              <pre className="text-xs text-gray-800 overflow-x-auto whitespace-pre-wrap max-h-[800px] overflow-y-auto border border-gray-300 p-4 bg-white rounded">
-                {JSON.stringify(results, null, 2)}
+              <h4 className="font-semibold mb-2">{resultType} - {rsApiTranslations.apiResponse}:</h4>
+              <pre className="text-sm text-gray-800 overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+                {JSON.stringify(displayResults, null, 2).length > 50000 
+                  ? 'Large data truncated for performance - check console for full data' 
+                  : JSON.stringify(displayResults, null, 2)}
               </pre>
-              
-              {/* Console logging for additional debugging - OPTIMIZED */}
-              {(() => {
-                const isLargeResponse = JSON.stringify(results).length > 100000;
-                
-                if (!isLargeResponse) {
-                  console.log('📋 === FULL JSON RESPONSE FOR DEBUGGING ===');
-                  console.log('Full response:', results);
-                } else {
-                  console.log('📋 === LARGE RESPONSE SUMMARY ===');
-                  console.log('Response size:', JSON.stringify(results).length, 'characters');
-                }
-                
-                if (results.data) {
-                  console.log('Data keys:', Object.keys(results.data));
-                  
-                  if (Array.isArray(results.data)) {
-                    console.log(`Data is array with ${results.data.length} batches`);
-                    if (results.data.length > 0 && results.data[0]) {
-                      console.log('First batch keys:', Object.keys(results.data[0]));
-                      
-                      if (results.data[0].WAYBILL_LIST?.WAYBILL) {
-                        const firstBatchWaybills = results.data[0].WAYBILL_LIST.WAYBILL;
-                        console.log('First batch waybill type:', Array.isArray(firstBatchWaybills) ? 'array' : 'object');
-                        console.log('First batch waybill count:', Array.isArray(firstBatchWaybills) ? firstBatchWaybills.length : 1);
-                        
-                        if (Array.isArray(firstBatchWaybills) && firstBatchWaybills.length > 0) {
-                          console.log('Sample waybill keys:', Object.keys(firstBatchWaybills[0]));
-                          if (!isLargeResponse) {
-                            console.log('Sample waybill:', firstBatchWaybills[0]);
-                          }
-                        }
-                      }
-                    }
-                  } else if (results.data.WAYBILL_LIST) {
-                    console.log('Single WAYBILL_LIST structure');
-                    console.log('WAYBILL_LIST keys:', Object.keys(results.data.WAYBILL_LIST));
-                  }
-                }
-                return null;
-              })()}
             </div>
           </div>
         )}
@@ -1380,8 +856,6 @@ const RSApiManagementPage = () => {
         startDate={startDate} 
         endDate={endDate} 
       />
-      
-      <IndividualVatSummary individualVatData={individualVatData} />
 
       <div className="bg-white p-6 rounded-lg shadow-md border">
         <h2 className="text-2xl font-bold mb-6 text-gray-800">{rsApiTranslations.rsApiManagement}</h2>
@@ -1499,18 +973,115 @@ const RSApiManagementPage = () => {
           </div>
         </div>
 
-        {/* Clear Results Button */}
-        <div className="mb-6">
+        {/* Clear Results & Debug Buttons */}
+        <div className="mb-6 flex space-x-3">
           <button
             onClick={clearResults}
             className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
           >
             {rsApiTranslations.clear}
           </button>
+          <button
+            onClick={() => {
+              console.log('🔍 MANUAL DEBUG TRIGGER');
+              console.log('🔵 Current sold waybills:', soldWaybills);
+              console.log('🟡 Current purchased waybills:', purchasedWaybills);
+              console.log('📊 Current VAT calculation:', vatCalculation);
+              console.log('🔵 Sold Results:', soldResults);
+              console.log('🟡 Purchased Results:', purchasedResults);
+            }}
+            className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition-colors"
+          >
+            🔍 Debug Console Log
+          </button>
         </div>
       </div>
 
-      <ResultsSection loading={loading} error={error} results={results} />
+      <ResultsSection 
+        loading={loading} 
+        error={error} 
+        results={results} 
+        soldResults={soldResults}
+        purchasedResults={purchasedResults}
+        soldWaybills={soldWaybills}
+        purchasedWaybills={purchasedWaybills}
+        vatCalculation={vatCalculation}
+      />
+
+      {/* Waybill Tables Section */}
+      {(soldWaybills.length > 0 || purchasedWaybills.length > 0) && (
+        <div className="space-y-6">
+          {/* Sold Waybills Table */}
+          {soldWaybills.length > 0 && (
+            <div className="bg-white p-6 rounded-lg shadow-md border">
+              <h3 className="text-lg font-semibold mb-4 text-blue-800">
+                🔵 გაყიდული ზედდებულები ({soldWaybills.length})
+              </h3>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="min-w-full table-auto border-collapse border border-gray-300 text-sm">
+                  <thead className="bg-blue-50 sticky top-0">
+                    <tr>
+                      <th className="border border-gray-300 px-3 py-2 text-left">ID</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">თანხა (₾)</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">მყიდველის TIN</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">სტატუსი</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">თარიღი</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {soldWaybills.map((wb, index) => (
+                      <tr key={wb.ID || wb.id || index} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                        <td className="border border-gray-300 px-3 py-2">{wb.ID || wb.id || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2 text-right font-mono">
+                          {wb.normalizedAmount ? wb.normalizedAmount.toFixed(2) : '0.00'}
+                        </td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.BUYER_TIN || wb.buyer_tin || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.STATUS || wb.status || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.CREATE_DATE || wb.create_date || 'N/A'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Purchased Waybills Table */}
+          {purchasedWaybills.length > 0 && (
+            <div className="bg-white p-6 rounded-lg shadow-md border">
+              <h3 className="text-lg font-semibold mb-4 text-yellow-800">
+                🟡 შესყიდული ზედდებულები ({purchasedWaybills.length})
+              </h3>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="min-w-full table-auto border-collapse border border-gray-300 text-sm">
+                  <thead className="bg-yellow-50 sticky top-0">
+                    <tr>
+                      <th className="border border-gray-300 px-3 py-2 text-left">ID</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">თანხა (₾)</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">გამყიდველის TIN</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">სტატუსი</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left">თარიღი</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchasedWaybills.map((wb, index) => (
+                      <tr key={wb.ID || wb.id || index} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                        <td className="border border-gray-300 px-3 py-2">{wb.ID || wb.id || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2 text-right font-mono">
+                          {wb.normalizedAmount ? wb.normalizedAmount.toFixed(2) : '0.00'}
+                        </td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.SELLER_TIN || wb.seller_tin || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.STATUS || wb.status || 'N/A'}</td>
+                        <td className="border border-gray-300 px-3 py-2">{wb.CREATE_DATE || wb.create_date || 'N/A'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

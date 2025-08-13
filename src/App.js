@@ -33,15 +33,26 @@ import {
 // Font sizes available for the accessibility controls
 const FONT_SIZES = ['text-sm', 'text-base', 'text-lg', 'text-xl'];
 
-// --- PASTE YOUR FIREBASE CONFIG OBJECT HERE ---
+// Firebase configuration from environment variables with fallback
 const firebaseConfig = {
-  apiKey: "AIzaSyB15dF8g5C_2D55gOwSx7Txu0dUTKrqAQE",
-  authDomain: "tastyapp-ff8b2.firebaseapp.com",
-  projectId: "tastyapp-ff8b2",
-  storageBucket: "tastyapp-ff8b2.appspot.com",
-  messagingSenderId: "282950310544",
-  appId: "1:282950310544:web:c2c00922dac72983d71615"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "AIzaSyB15dF8g5C_2D55gOwSx7Txu0dUTKrqAQE",
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "tastyapp-ff8b2.firebaseapp.com",
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "tastyapp-ff8b2",
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "tastyapp-ff8b2.appspot.com",
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "282950310544",
+  appId: process.env.REACT_APP_FIREBASE_APP_ID || "1:282950310544:web:c2c00922dac72983d71615",
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID
 };
+
+// Validate Firebase configuration
+const missingFirebaseVars = Object.entries(firebaseConfig)
+  .filter(([key, value]) => key !== 'measurementId' && !value)
+  .map(([key]) => key);
+
+if (missingFirebaseVars.length > 0) {
+  console.error('Missing required Firebase configuration:', missingFirebaseVars);
+  console.error('Please check your .env file and ensure all REACT_APP_FIREBASE_* variables are set');
+}
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
@@ -671,34 +682,118 @@ const LoginPage = () => {
 }
 
 function App() {
+  const [error, setError] = useState(null);
+  
   // Effect to load the xlsx script for Excel export
   useEffect(() => {
-      const script = document.createElement('script');
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-      script.async = true;
-      document.body.appendChild(script);
-      return () => {
-          document.body.removeChild(script);
+      try {
+          const script = document.createElement('script');
+          script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          script.async = true;
+          script.onload = () => console.log('XLSX library loaded successfully');
+          script.onerror = () => console.warn('XLSX library failed to load');
+          document.body.appendChild(script);
+          return () => {
+              try {
+                  document.body.removeChild(script);
+              } catch (e) {
+                  // Script might have been removed already
+              }
+          }
+      } catch (err) {
+          console.error('Error loading XLSX script:', err);
       }
   }, []);
 
-  return (
-    <AuthProvider>
-      <DataProvider>
-        <MainController />
-      </DataProvider>
-    </AuthProvider>
-  );
+  // Error boundary
+  useEffect(() => {
+      const handleError = (event) => {
+          console.error('Application error:', event.error);
+          setError(event.error?.message || 'An unexpected error occurred');
+      };
+      
+      window.addEventListener('error', handleError);
+      return () => window.removeEventListener('error', handleError);
+  }, []);
+
+  if (error) {
+      return (
+          <div style={{ 
+              padding: '20px', 
+              textAlign: 'center', 
+              color: 'red',
+              fontFamily: 'Arial, sans-serif'
+          }}>
+              <h1>Application Error</h1>
+              <p>{error}</p>
+              <button onClick={() => window.location.reload()}>
+                  Reload Page
+              </button>
+          </div>
+      );
+  }
+
+  try {
+      return (
+          <AuthProvider>
+              <DataProvider>
+                  <MainController />
+              </DataProvider>
+          </AuthProvider>
+      );
+  } catch (err) {
+      console.error('App render error:', err);
+      return (
+          <div style={{ 
+              padding: '20px', 
+              textAlign: 'center', 
+              color: 'red',
+              fontFamily: 'Arial, sans-serif'
+          }}>
+              <h1>Application Failed to Load</h1>
+              <p>Error: {err.message}</p>
+              <p>Please check the browser console for more details.</p>
+              <button onClick={() => window.location.reload()}>
+                  Reload Page
+              </button>
+          </div>
+      );
+  }
 }
 
 function MainController() {
   const { user, loading } = useAuth();
   
   if (loading) {
-      return (<div className="min-h-screen flex items-center justify-center"><p>იტვირთება...</p></div>);
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-gray-100">
+              <div className="text-center">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
+                  <p className="text-gray-600">იტვირთება...</p>
+              </div>
+          </div>
+      );
   }
 
-  return user ? <Dashboard /> : <LoginPage />;
+  try {
+      return user ? <Dashboard /> : <LoginPage />;
+  } catch (err) {
+      console.error('MainController error:', err);
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-gray-100">
+              <div className="text-center p-8 bg-white rounded-lg shadow-lg">
+                  <h1 className="text-xl font-bold text-red-600 mb-4">Application Error</h1>
+                  <p className="text-gray-600 mb-4">Failed to load the main application.</p>
+                  <button 
+                      onClick={() => window.location.reload()}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                      Reload Application
+                  </button>
+              </div>
+          </div>
+      );
+  }
 }
 
 export default App;

@@ -9,11 +9,23 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const soapClient_1 = require("./soapClient");
 // Load environment variables
 dotenv_1.default.config();
+// Validate required environment variables
+const requiredEnvVars = ['SOAP_ENDPOINT', 'SOAP_SU', 'SOAP_SP'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+if (missingEnvVars.length > 0) {
+    console.error('❌ Missing required environment variables:', missingEnvVars);
+    console.error('Please check your .env file or environment configuration');
+    process.exit(1);
+}
 const app = (0, express_1.default)();
 // Middleware
 app.use((0, cors_1.default)({
-    origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : true,
-    credentials: true
+    origin: process.env.NODE_ENV === 'development'
+        ? ['http://localhost:3000', 'http://localhost:3001']
+        : process.env.FRONTEND_URL || true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express_1.default.json());
 // Allowed RS.ge operations
