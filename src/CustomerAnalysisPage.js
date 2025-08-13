@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { useData } from './App';
+import { extractWaybillsFromResponse, parseAmount } from './utils/rsWaybills';
 
 // ==================== CONSTANTS & UTILITIES ====================
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
@@ -306,18 +307,17 @@ const CustomerAnalysisPage = () => {
 
   const formatDate = useCallback((dateString) => {
     if (!dateString) return '';
-    // Fixed format for RS.ge API
-    const date = new Date(dateString);
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    return `${dd}.${mm}.${yyyy}`;
+    // RS.ge API expects ISO format (YYYY-MM-DD), not dd.mm.yyyy
+    return dateString;
   }, []);
 
   const formatEndDate = useCallback((dateString) => {
     if (!dateString) return '';
-    return formatDate(dateString);
-  }, [formatDate]);
+    // For end dates, we want to include the entire day, so we add one day
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + 1);
+    return date.toISOString().split('T')[0];
+  }, []);
 
   // ==================== PAYMENT PROCESSING ====================
   const createPaymentId = useCallback((payment) => {
@@ -417,42 +417,41 @@ const CustomerAnalysisPage = () => {
   }, [firebasePayments]);
 
   // ==================== WAYBILL PROCESSING ====================
-  const extractWaybillsFromResponse = useCallback((data) => {
+  const processWaybillsFromResponse = useCallback((data) => {
     performanceMonitor.start('extract-waybills');
     
-    let waybills = [];
-    
-    if (Array.isArray(data.data)) {
-      for (const batch of data.data) {
-        if (batch.WAYBILL_LIST?.WAYBILL) {
-          const batchWaybills = Array.isArray(batch.WAYBILL_LIST.WAYBILL) 
-            ? batch.WAYBILL_LIST.WAYBILL 
-            : [batch.WAYBILL_LIST.WAYBILL];
-          waybills.push(...batchWaybills);
-        } else if (batch.ID || batch.id) {
-          waybills.push(batch);
-        }
-      }
-    } else if (data.data?.WAYBILL_LIST?.WAYBILL) {
-      waybills = Array.isArray(data.data.WAYBILL_LIST.WAYBILL) 
-        ? data.data.WAYBILL_LIST.WAYBILL 
-        : [data.data.WAYBILL_LIST.WAYBILL];
-    }
+    // Use robust extraction from utilities
+    const waybills = extractWaybillsFromResponse(data, 'Customer Analysis');
 
-    const processedWaybills = waybills.map(wb => {
-      const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
-      const isAfterCutoff = isAfterCutoffDate(waybillDate);
-      
-      return {
-        ...wb,
-        customerId: (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim(),
-        customerName: (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim(),
-        amount: parseFloat(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0) || 0,
-        date: waybillDate,
-        waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
-        isAfterCutoff
-      };
-    });
+    console.log(`📊 CustomerAnalysisPage: Extracted ${waybills.length} raw waybills`);
+
+    const processedWaybills = waybills
+      .filter(wb => {
+        // Filter out cancelled/invalid waybills (STATUS = -1 or STATUS = -2)
+        const status = wb.STATUS || wb.status;
+        if (status === '-1' || status === -1 || status === '-2' || status === -2) {
+          console.log(`🚫 Filtering out waybill with STATUS = ${status}: ID=${wb.ID || wb.id}`);
+          return false;
+        }
+        return true;
+      })
+      .map(wb => {
+        const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
+        const isAfterCutoff = isAfterCutoffDate(waybillDate);
+        
+        return {
+          ...wb,
+          // For sales waybills (get_waybills), the customer is the BUYER (who we sold to)
+          customerId: (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim(),
+          customerName: (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim(),
+          amount: wb.normalizedAmount || parseAmount(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0),
+          date: waybillDate,
+          waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
+          isAfterCutoff
+        };
+      });
+
+    console.log(`✅ CustomerAnalysisPage: Processed ${processedWaybills.length} valid waybills (filtered out ${waybills.length - processedWaybills.length} with STATUS = -1 or -2)`);
 
     performanceMonitor.end('extract-waybills');
     return processedWaybills;
@@ -476,27 +475,59 @@ const CustomerAnalysisPage = () => {
     setError('');
 
     try {
+      const requestPayload = {
+        create_date_s: formatDate(dateRange.startDate),
+        create_date_e: formatEndDate(dateRange.endDate)
+      };
+      
+      console.log('🔍 CustomerAnalysisPage API Request:', {
+        url: `${API_BASE_URL}/api/rs/get_waybills`,
+        payload: requestPayload,
+        dateRange: dateRange
+      });
+      
       const response = await fetch(`${API_BASE_URL}/api/rs/get_waybills`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          create_date_s: formatDate(dateRange.startDate),
-          create_date_e: formatEndDate(dateRange.endDate)
-        }),
+        body: JSON.stringify(requestPayload),
         signal: abortControllerRef.current.signal
       });
 
+      console.log('🔍 CustomerAnalysisPage API Response Status:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Try to get error details from response body
+        let errorBody = '';
+        try {
+          errorBody = await response.text();
+          console.error('❌ API Error Response Body:', errorBody);
+        } catch (bodyError) {
+          console.error('❌ Could not read error response body:', bodyError);
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${errorBody ? ` - ${errorBody}` : ''}`);
       }
 
       const data = await response.json();
       
+      console.log('🔍 CustomerAnalysisPage API Response Data:', {
+        success: data.success,
+        hasData: !!data.data,
+        dataType: typeof data.data,
+        dataKeys: data.data ? Object.keys(data.data) : null,
+        error: data.error
+      });
+      
       if (data.success === false) {
+        console.error('❌ API returned success: false, error:', data.error);
         throw new Error(data.error || 'API მოთხოვნა ვერ შესრულდა');
       }
 
-      const extractedWaybills = extractWaybillsFromResponse(data);
+      const extractedWaybills = processWaybillsFromResponse(data);
       
       // Filter and process waybills
       const dateRangeStartMs = new Date(dateRange.startDate).getTime();
@@ -535,7 +566,7 @@ const CustomerAnalysisPage = () => {
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [dateRange, formatDate, formatEndDate, extractWaybillsFromResponse, rememberedWaybills, updateCustomerBalance]);
+  }, [dateRange, formatDate, formatEndDate, processWaybillsFromResponse, rememberedWaybills, updateCustomerBalance]);
 
   // ==================== EXCEL PROCESSING ====================
   const processExcelInBatches = useCallback(async (jsonData, bank) => {
