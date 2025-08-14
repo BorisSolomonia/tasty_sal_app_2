@@ -591,7 +591,6 @@ const CustomerAnalysisPage = () => {
     }
   }, [addPayment]);
 
-  // ==================== OPTIMIZED DUPLICATE DETECTION ====================
   // ==================== WAYBILL PROCESSING ====================
   const processWaybillsFromResponse = useCallback((data) => {
     performanceMonitor.start('extract-waybills');
@@ -1632,8 +1631,8 @@ const StartingDebtForm = ({ onAddDebt }) => {
 };
 
 const TransactionSummaryPanel = ({ transactionSummary }) => {
-  const [showDetails, setShowDetails] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState('added');
+  const [showDetails, setShowDetails] = useState(false);
+  const [activeTab, setActiveTab] = useState('added');
 
   if (!transactionSummary) return null;
 
@@ -1827,11 +1826,11 @@ const TransactionSummaryPanel = ({ transactionSummary }) => {
         </div>
       )}
     </div>
-  );
+);
 };
 
 const CustomerAnalysisTable = ({ 
-  customerAnalysis, 
+  customerAnalysis,
   editingDebt, 
   editDebtValue, 
   setEditDebtValue, 
