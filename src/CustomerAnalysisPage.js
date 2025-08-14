@@ -191,6 +191,7 @@ const CustomerAnalysisPage = () => {
   const [progress, setProgress] = useState('');
   const [editingDebt, setEditingDebt] = useState(null);
   const [editDebtValue, setEditDebtValue] = useState('');
+  const [transactionSummary, setTransactionSummary] = useState(null);
   
   // Performance optimization: Track processing state
   const [processingState, setProcessingState] = useState({
@@ -246,6 +247,180 @@ const CustomerAnalysisPage = () => {
   useEffect(() => {
     debouncedSave('startingDebts', startingDebts);
   }, [startingDebts, debouncedSave]);
+
+  // ==================== DATE PARSING UTILITIES ====================
+  const parseExcelDate = useCallback((dateValue) => {
+    if (!dateValue) return null;
+    
+    // Handle Excel serial date numbers
+    if (typeof dateValue === 'number') {
+      const excelDate = new Date((dateValue - 25569) * 86400 * 1000);
+      return excelDate.toISOString().split('T')[0];
+    }
+    
+    // Handle MM/DD/YYYY format string
+    if (typeof dateValue === 'string') {
+      const mmddyyyyPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+      const match = dateValue.match(mmddyyyyPattern);
+      
+      if (match) {
+        const [, month, day, year] = match;
+        const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        return date.toISOString().split('T')[0];
+      }
+      
+      // Try parsing as regular date string
+      try {
+        const date = new Date(dateValue);
+        if (!isNaN(date.getTime())) {
+          return date.toISOString().split('T')[0];
+        }
+      } catch (error) {
+        console.error(`❌ Date parsing error for "${dateValue}":`, error);
+      }
+    }
+    
+    // Handle Date object
+    if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+      return dateValue.toISOString().split('T')[0];
+    }
+    
+    console.warn(`⚠️ Unable to parse date: ${dateValue} (type: ${typeof dateValue})`);
+    return null;
+  }, []);
+
+  // ==================== VALIDATION FUNCTION ====================
+  const validateExcelVsAppPayments = useCallback((excelData, bank) => {
+    const results = {
+      excelTotal: 0,
+      appTotal: 0,
+      transactionDetails: [],
+      skippedTransactions: [],
+      duplicateTransactions: [],
+      addedTransactions: []
+    };
+    
+    // Process Excel data row by row
+    for (let rowIndex = 1; rowIndex < excelData.length; rowIndex++) {
+      const row = excelData[rowIndex];
+      if (!row || row.length === 0) continue;
+
+      const paymentAmount = row[4]; // Column E
+      const customerId = row[11]; // Column L  
+      const paymentDateRaw = row[0]; // Column A
+      const description = row[1] || '';
+      
+      let payment = 0;
+      let skipReason = null;
+      
+      // Parse payment amount
+      if (typeof paymentAmount === 'number') {
+        payment = paymentAmount;
+      } else if (typeof paymentAmount === 'string' && paymentAmount.trim()) {
+        payment = parseFloat(paymentAmount.replace(/[^\d.-]/g, '')) || 0;
+      }
+      
+      // Skip if payment <= 0
+      if (payment <= 0) {
+        skipReason = `Payment amount is ${payment} (≤ 0)`;
+        results.skippedTransactions.push({
+          rowIndex: rowIndex + 1,
+          customerId: customerId || 'N/A',
+          payment,
+          date: paymentDateRaw || 'N/A',
+          reason: skipReason
+        });
+        continue;
+      }
+      
+      // Skip if no customer ID
+      if (!customerId || String(customerId).trim() === '') {
+        skipReason = 'Missing customer ID';
+        results.skippedTransactions.push({
+          rowIndex: rowIndex + 1,
+          customerId: 'N/A',
+          payment,
+          date: paymentDateRaw || 'N/A', 
+          reason: skipReason
+        });
+        continue;
+      }
+      
+      // Parse date using correct MM/DD/YYYY format
+      const paymentDate = parseExcelDate(paymentDateRaw);
+      if (!paymentDate) {
+        skipReason = `Invalid date format: ${paymentDateRaw}`;
+        results.skippedTransactions.push({
+          rowIndex: rowIndex + 1,
+          customerId: String(customerId).trim(),
+          payment,
+          date: paymentDateRaw || 'N/A',
+          reason: skipReason
+        });
+        continue;
+      }
+      
+      const isAfterCutoff = isAfterCutoffDate(paymentDate);
+      
+      // Include in Excel total if after cutoff date
+      if (isAfterCutoff) {
+        results.excelTotal += payment;
+      }
+      
+      const paymentRecord = {
+        customerId: String(customerId).trim(),
+        payment: Math.round(payment * 100) / 100,
+        date: paymentDate,
+        description,
+        bank,
+        isAfterCutoff,
+        rowIndex: rowIndex + 1
+      };
+      
+      // Check for duplicates
+      const isDuplicate = isContextAwareDuplicate(paymentRecord, rowIndex, excelData);
+      
+      if (isDuplicate) {
+        results.duplicateTransactions.push({
+          ...paymentRecord,
+          reason: 'Duplicate found in Firebase'
+        });
+      } else if (isAfterCutoff) {
+        results.addedTransactions.push(paymentRecord);
+      }
+      
+      results.transactionDetails.push({
+        ...paymentRecord,
+        isDuplicate,
+        skipReason,
+        status: isDuplicate ? 'Duplicate' : (isAfterCutoff ? 'Added' : 'Before Cutoff')
+      });
+    }
+    
+    // Calculate app total from Firebase payments after cutoff
+    if (firebasePayments?.length) {
+      firebasePayments.forEach(payment => {
+        if (!payment.supplierName || !payment.paymentDate || !payment.amount) return;
+        
+        const paymentDate = payment.paymentDate;
+        const dateObj = paymentDate.toDate ? paymentDate.toDate() : new Date(paymentDate);
+        const paymentDateString = dateObj.toISOString().split('T')[0];
+        
+        if (isAfterCutoffDate(paymentDateString) && (payment.source === bank || payment.source === 'excel')) {
+          results.appTotal += payment.amount;
+        }
+      });
+    }
+    
+    console.log(`\n🔍 VALIDATION RESULTS for ${bank.toUpperCase()} Bank:`);
+    console.log(`   Excel Total (after ${CUTOFF_DATE}): ₾${results.excelTotal.toFixed(2)}`);
+    console.log(`   App Total (Firebase): ₾${results.appTotal.toFixed(2)}`);
+    console.log(`   Difference: ₾${(results.excelTotal - results.appTotal).toFixed(2)}`);
+    console.log(`   Transactions: ${results.addedTransactions.length} added, ${results.skippedTransactions.length} skipped, ${results.duplicateTransactions.length} duplicates`);
+    console.log(`\n`);
+    
+    return results;
+  }, [parseExcelDate, isAfterCutoffDate, isContextAwareDuplicate, firebasePayments]);
 
   // ==================== UTILITY FUNCTIONS ====================
   const getCustomerName = useCallback((customerId) => {
@@ -573,6 +748,10 @@ const CustomerAnalysisPage = () => {
     const parsedData = [];
     const totalRows = jsonData.length;
     
+    // First validate and get transaction summary
+    const validationResults = validateExcelVsAppPayments(jsonData, bank);
+    setTransactionSummary(validationResults);
+    
     setProcessingState({
       isProcessing: true,
       processedCount: 0,
@@ -581,10 +760,12 @@ const CustomerAnalysisPage = () => {
 
     // Detect columns
     const headers = jsonData[0] || [];
-    const dateColumn = 0;
+    const dateColumn = 0; // Column A
     const paymentColumn = 4; // Column E
     const customerIdColumn = 11; // Column L
     const descriptionColumn = 1;
+    
+    let skipCount = 0;
 
     // Process in batches for better performance
     for (let i = 1; i < totalRows; i += BATCH_SIZE) {
@@ -603,30 +784,18 @@ const CustomerAnalysisPage = () => {
           payment = parseFloat(paymentAmount.replace(/[^\d.-]/g, '')) || 0;
         }
         
-        // Match Excel logic: include payments >= 0, but skip if < 0
-        if (payment < 0) continue;
+        // Optimization: Skip if payment amount is 0 or negative
+        if (payment <= 0) {
+          skipCount++;
+          continue;
+        }
 
         const customerId = row[customerIdColumn];
         if (!customerId || String(customerId).trim() === '') continue;
 
-        // Parse date
-        const paymentDateRaw = row[dateColumn];
-        let paymentDate = '';
-        
-        if (paymentDateRaw) {
-          if (typeof paymentDateRaw === 'number') {
-            const excelDate = new Date((paymentDateRaw - 25569) * 86400 * 1000);
-            paymentDate = excelDate.toISOString().split('T')[0];
-          } else if (typeof paymentDateRaw === 'string') {
-            try {
-              paymentDate = new Date(paymentDateRaw).toISOString().split('T')[0];
-            } catch {
-              paymentDate = paymentDateRaw;
-            }
-          } else if (paymentDateRaw instanceof Date) {
-            paymentDate = paymentDateRaw.toISOString().split('T')[0];
-          }
-        }
+        // Parse date using proper MM/DD/YYYY format parsing
+        const paymentDate = parseExcelDate(row[dateColumn]);
+        if (!paymentDate) continue;
         
         const isAfterCutoff = isAfterCutoffDate(paymentDate);
         
@@ -636,11 +805,11 @@ const CustomerAnalysisPage = () => {
           date: paymentDate,
           description: row[descriptionColumn] || '',
           bank: bank,
-          isAfterCutoff: isAfterCutoff
+          isAfterCutoff: isAfterCutoff,
+          rowIndex: i + 1
         };
 
-        // Enhanced debugging for Excel formula comparison
-        console.log(`🔍 Processing payment: Customer=${paymentRecord.customerId}, Amount=${paymentRecord.payment}, Date=${paymentRecord.date}, AfterCutoff=${isAfterCutoff}`);
+        console.log(`🔍 Row ${i + 1}: Customer=${paymentRecord.customerId}, Amount=${paymentRecord.payment}, Date=${paymentRecord.date} (${row[dateColumn]}), AfterCutoff=${isAfterCutoff}`);
         
         // Check for duplicates
         if (!isContextAwareDuplicate(paymentRecord, i, jsonData)) {
@@ -650,6 +819,8 @@ const CustomerAnalysisPage = () => {
             await saveBankPaymentToFirebase(paymentRecord);
             rememberPayment(paymentRecord);
           }
+        } else {
+          console.log(`⚠️ Duplicate found for row ${i + 1}: Customer=${paymentRecord.customerId}, Amount=${paymentRecord.payment}, Date=${paymentRecord.date}`);
         }
       }
       
@@ -669,8 +840,10 @@ const CustomerAnalysisPage = () => {
     });
 
     // Summary for Excel comparison
-    console.log(`\n📊 EXCEL COMPARISON SUMMARY for ${bank.toUpperCase()} Bank:`);
-    console.log(`   Total payments processed: ${parsedData.length}`);
+    console.log(`\n📊 EXCEL PROCESSING SUMMARY for ${bank.toUpperCase()} Bank:`);
+    console.log(`   Total rows processed: ${totalRows - 1}`);
+    console.log(`   Skipped due to amount ≤ 0: ${skipCount}`);
+    console.log(`   Valid payments found: ${parsedData.length}`);
     console.log(`   After cutoff (${CUTOFF_DATE}): ${parsedData.filter(p => p.isAfterCutoff).length}`);
     console.log(`   Before cutoff: ${parsedData.filter(p => !p.isAfterCutoff).length}`);
     
@@ -691,7 +864,7 @@ const CustomerAnalysisPage = () => {
     console.log(`\n`);
     
     return parsedData;
-  }, [isAfterCutoffDate, isContextAwareDuplicate, saveBankPaymentToFirebase, rememberPayment]);
+  }, [parseExcelDate, isAfterCutoffDate, isContextAwareDuplicate, saveBankPaymentToFirebase, rememberPayment, validateExcelVsAppPayments]);
 
   const handleFileUpload = useCallback(async (bank, file) => {
     if (!file) return;
@@ -1366,6 +1539,11 @@ const CustomerAnalysisPage = () => {
           </div>
         )}
 
+        {/* Transaction Analysis Summary */}
+        {transactionSummary && (
+          <TransactionSummaryPanel transactionSummary={transactionSummary} />
+        )}
+
         {/* Customer Analysis Table */}
         {Object.keys(calculateCustomerAnalysis).length > 0 && (
           <CustomerAnalysisTable
@@ -1449,6 +1627,205 @@ const StartingDebtForm = ({ onAddDebt }) => {
         დამატება
       </button>
     </form>
+  );
+};
+
+const TransactionSummaryPanel = ({ transactionSummary }) => {
+  const [showDetails, setShowDetails] = useState(false);
+  const [activeTab, setActiveTab] = useState('added');
+
+  if (!transactionSummary) return null;
+
+  const { 
+    excelTotal, 
+    appTotal, 
+    transactionDetails, 
+    skippedTransactions, 
+    duplicateTransactions, 
+    addedTransactions 
+  } = transactionSummary;
+
+  const difference = excelTotal - appTotal;
+  const isMatching = Math.abs(difference) < 0.01;
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold text-gray-700">ტრანზაქციების ანალიზი</h3>
+        <button
+          onClick={() => setShowDetails(!showDetails)}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+        >
+          {showDetails ? 'დეტალების დამალვა' : 'დეტალების ნახვა'}
+        </button>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+          <h4 className="text-sm font-medium text-blue-800">Excel-ის ჯამი</h4>
+          <p className="text-xl font-bold text-blue-900 mt-1">₾{excelTotal.toFixed(2)}</p>
+          <p className="text-xs text-blue-600 mt-1">({CUTOFF_DATE} შემდეგ)</p>
+        </div>
+        
+        <div className="bg-green-50 rounded-lg border border-green-200 p-4">
+          <h4 className="text-sm font-medium text-green-800">აპ-ის ჯამი</h4>
+          <p className="text-xl font-bold text-green-900 mt-1">₾{appTotal.toFixed(2)}</p>
+          <p className="text-xs text-green-600 mt-1">(Firebase)</p>
+        </div>
+        
+        <div className={`rounded-lg border p-4 ${
+          isMatching 
+            ? 'bg-emerald-50 border-emerald-200' 
+            : 'bg-red-50 border-red-200'
+        }`}>
+          <h4 className={`text-sm font-medium ${
+            isMatching ? 'text-emerald-800' : 'text-red-800'
+          }`}>
+            განსხვავება
+          </h4>
+          <p className={`text-xl font-bold mt-1 ${
+            isMatching ? 'text-emerald-900' : 'text-red-900'
+          }`}>
+            ₾{difference.toFixed(2)}
+          </p>
+          <p className={`text-xs mt-1 ${
+            isMatching ? 'text-emerald-600' : 'text-red-600'
+          }`}>
+            {isMatching ? '✅ ემთხვევა' : '❌ არ ემთხვევა'}
+          </p>
+        </div>
+        
+        <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
+          <h4 className="text-sm font-medium text-gray-800">ტრანზაქციები</h4>
+          <p className="text-xl font-bold text-gray-900 mt-1">{transactionDetails.length}</p>
+          <p className="text-xs text-gray-600 mt-1">
+            {addedTransactions.length} დამატებული
+          </p>
+        </div>
+      </div>
+
+      {/* Detailed View */}
+      {showDetails && (
+        <div>
+          {/* Tab Navigation */}
+          <div className="border-b border-gray-200 mb-4">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('added')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'added'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                დამატებული ({addedTransactions.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('skipped')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'skipped'
+                    ? 'border-yellow-500 text-yellow-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                გამოტოვებული ({skippedTransactions.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('duplicates')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'duplicates'
+                    ? 'border-red-500 text-red-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                დუბლიკატები ({duplicateTransactions.length})
+              </button>
+            </nav>
+          </div>
+
+          {/* Tab Content */}
+          <div className="max-h-96 overflow-y-auto">
+            {activeTab === 'added' && (
+              <div className="space-y-2">
+                {addedTransactions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">დამატებული ტრანზაქციები არ არის</p>
+                ) : (
+                  addedTransactions.map((transaction, index) => (
+                    <div key={index} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium text-green-900">მწკრივი {transaction.rowIndex}</p>
+                          <p className="text-sm text-green-700">მომხმარებელი: {transaction.customerId}</p>
+                          <p className="text-sm text-green-700">თანხა: ₾{transaction.payment.toFixed(2)}</p>
+                          <p className="text-sm text-green-700">თარიღი: {transaction.date}</p>
+                          {transaction.description && (
+                            <p className="text-xs text-green-600 mt-1">აღწერა: {transaction.description}</p>
+                          )}
+                        </div>
+                        <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                          ✅ დამატებული
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'skipped' && (
+              <div className="space-y-2">
+                {skippedTransactions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">გამოტოვებული ტრანზაქციები არ არის</p>
+                ) : (
+                  skippedTransactions.map((transaction, index) => (
+                    <div key={index} className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium text-yellow-900">მწკრივი {transaction.rowIndex}</p>
+                          <p className="text-sm text-yellow-700">მომხმარებელი: {transaction.customerId}</p>
+                          <p className="text-sm text-yellow-700">თანხა: ₾{transaction.payment?.toFixed(2) || 'N/A'}</p>
+                          <p className="text-sm text-yellow-700">თარიღი: {transaction.date}</p>
+                          <p className="text-sm text-yellow-600 font-medium mt-1">მიზეზი: {transaction.reason}</p>
+                        </div>
+                        <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                          ⚠️ გამოტოვებული
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'duplicates' && (
+              <div className="space-y-2">
+                {duplicateTransactions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">დუბლიკატები არ არის</p>
+                ) : (
+                  duplicateTransactions.map((transaction, index) => (
+                    <div key={index} className="bg-red-50 border border-red-200 rounded-lg p-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium text-red-900">მწკრივი {transaction.rowIndex}</p>
+                          <p className="text-sm text-red-700">მომხმარებელი: {transaction.customerId}</p>
+                          <p className="text-sm text-red-700">თანხა: ₾{transaction.payment.toFixed(2)}</p>
+                          <p className="text-sm text-red-700">თარიღი: {transaction.date}</p>
+                          <p className="text-sm text-red-600 font-medium mt-1">მიზეზი: {transaction.reason}</p>
+                        </div>
+                        <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">
+                          🔄 დუბლიკატი
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

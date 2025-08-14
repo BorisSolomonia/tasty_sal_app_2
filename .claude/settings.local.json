@@ -34,6 +34,7 @@
       "Bash(timeout 5 npm run dev)",
       "Bash(cmd //c:*)"
     ],
-    "deny": []
+    "deny": [],
+    "defaultMode": "acceptEdits"
   }
 }
