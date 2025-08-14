@@ -254,8 +254,19 @@ const CustomerAnalysisPage = () => {
     
     // Handle Excel serial date numbers
     if (typeof dateValue === 'number') {
+      // Excel epoch starts at 1900-01-01, but Excel incorrectly treats 1900 as a leap year
+      // So we need to subtract 25569 days to get Unix epoch, then convert to date
       const excelDate = new Date((dateValue - 25569) * 86400 * 1000);
-      return excelDate.toISOString().split('T')[0];
+      
+      // Extract date components in UTC to avoid timezone shifts
+      const year = excelDate.getUTCFullYear();
+      const month = excelDate.getUTCMonth();
+      const day = excelDate.getUTCDate();
+      
+      // Create date string manually to avoid timezone conversion
+      const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      console.log(`📅 Excel serial date ${dateValue} parsed as ${dateString}`);
+      return dateString;
     }
     
     // Handle MM/DD/YYYY format string
@@ -265,15 +276,24 @@ const CustomerAnalysisPage = () => {
       
       if (match) {
         const [, month, day, year] = match;
-        const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        return date.toISOString().split('T')[0];
+        // Create date string directly without Date object to avoid timezone issues
+        const monthStr = String(parseInt(month)).padStart(2, '0');
+        const dayStr = String(parseInt(day)).padStart(2, '0');
+        const dateString = `${year}-${monthStr}-${dayStr}`;
+        console.log(`📅 MM/DD/YYYY date ${dateValue} parsed as ${dateString}`);
+        return dateString;
       }
       
       // Try parsing as regular date string
       try {
-        const date = new Date(dateValue);
+        const date = new Date(dateValue + 'T00:00:00.000Z'); // Force UTC interpretation
         if (!isNaN(date.getTime())) {
-          return date.toISOString().split('T')[0];
+          const year = date.getUTCFullYear();
+          const month = date.getUTCMonth();
+          const day = date.getUTCDate();
+          const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          console.log(`📅 Regular date string ${dateValue} parsed as ${dateString}`);
+          return dateString;
         }
       } catch (error) {
         console.error(`❌ Date parsing error for "${dateValue}":`, error);
@@ -282,7 +302,13 @@ const CustomerAnalysisPage = () => {
     
     // Handle Date object
     if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
-      return dateValue.toISOString().split('T')[0];
+      // Extract UTC components to avoid timezone conversion
+      const year = dateValue.getUTCFullYear();
+      const month = dateValue.getUTCMonth();
+      const day = dateValue.getUTCDate();
+      const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      console.log(`📅 Date object parsed as ${dateString}`);
+      return dateString;
     }
     
     console.warn(`⚠️ Unable to parse date: ${dateValue} (type: ${typeof dateValue})`);
@@ -323,9 +349,14 @@ const CustomerAnalysisPage = () => {
     const duplicateFound = firebasePayments.some(fbPayment => {
       if (!fbPayment.supplierName || !fbPayment.paymentDate || !fbPayment.amount) return false;
       
-      const fbDate = fbPayment.paymentDate.toDate ? 
-        fbPayment.paymentDate.toDate().toISOString().split('T')[0] : 
-        new Date(fbPayment.paymentDate).toISOString().split('T')[0];
+      // Use UTC date components to avoid timezone shifts
+      const dateObj = fbPayment.paymentDate.toDate ? 
+        fbPayment.paymentDate.toDate() : 
+        new Date(fbPayment.paymentDate);
+      const year = dateObj.getUTCFullYear();
+      const month = dateObj.getUTCMonth();
+      const day = dateObj.getUTCDate();
+      const fbDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       
       const fbKey = `${fbPayment.supplierName}_${fbDate}_${Math.round(fbPayment.amount * 100)}`;
       return fbKey === paymentKey;
@@ -450,7 +481,11 @@ const CustomerAnalysisPage = () => {
         
         const paymentDate = payment.paymentDate;
         const dateObj = paymentDate.toDate ? paymentDate.toDate() : new Date(paymentDate);
-        const paymentDateString = dateObj.toISOString().split('T')[0];
+        // Use UTC date components to avoid timezone shifts
+        const year = dateObj.getUTCFullYear();
+        const month = dateObj.getUTCMonth();
+        const day = dateObj.getUTCDate();
+        const paymentDateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         
         if (isAfterCutoffDate(paymentDateString) && (payment.source === bank || payment.source === 'excel')) {
           results.appTotal += payment.amount;
@@ -989,7 +1024,11 @@ const CustomerAnalysisPage = () => {
         
         if (paymentDateMs < dateRangeStart || paymentDateMs > dateRangeEnd) return;
         
-        const paymentDateString = dateObj.toISOString().split('T')[0];
+        // Use UTC date components to avoid timezone shifts
+        const year = dateObj.getUTCFullYear();
+        const month = dateObj.getUTCMonth();
+        const day = dateObj.getUTCDate();
+        const paymentDateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const isAfterCutoff = isAfterCutoffDate(paymentDateString);
         
         if (!isAfterCutoff) return;
