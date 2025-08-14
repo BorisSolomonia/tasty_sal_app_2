@@ -289,6 +289,52 @@ const CustomerAnalysisPage = () => {
     return null;
   }, []);
 
+  // ==================== UTILITY FUNCTIONS ====================
+  const isAfterCutoffDate = useCallback((dateString) => {
+    if (!dateString) {
+      console.log(`⚠️ Date filter: Empty date string`);
+      return false;
+    }
+    try {
+      const date = new Date(dateString);
+      const cutoff = new Date(CUTOFF_DATE);
+      const isAfter = date >= cutoff; // Match Excel ">="&Sheet1!$C$6 logic
+      
+      // Debug date comparison for Excel formula verification
+      if (!isAfter) {
+        console.log(`📅 Date filter: ${dateString} (${date.toISOString().split('T')[0]}) is before cutoff ${CUTOFF_DATE}`);
+      }
+      
+      return isAfter;
+    } catch (error) {
+      console.log(`❌ Date filter: Invalid date "${dateString}" - ${error.message}`);
+      return false;
+    }
+  }, []);
+
+  const isContextAwareDuplicate = useCallback((currentPayment, rowIndex, excelData) => {
+    if (!firebasePayments?.length) return false;
+    
+    performanceMonitor.start('duplicate-check');
+    
+    // Use Map for O(1) lookup
+    const paymentKey = `${currentPayment.customerId}_${currentPayment.date}_${Math.round(currentPayment.payment * 100)}`;
+    
+    const duplicateFound = firebasePayments.some(fbPayment => {
+      if (!fbPayment.supplierName || !fbPayment.paymentDate || !fbPayment.amount) return false;
+      
+      const fbDate = fbPayment.paymentDate.toDate ? 
+        fbPayment.paymentDate.toDate().toISOString().split('T')[0] : 
+        new Date(fbPayment.paymentDate).toISOString().split('T')[0];
+      
+      const fbKey = `${fbPayment.supplierName}_${fbDate}_${Math.round(fbPayment.amount * 100)}`;
+      return fbKey === paymentKey;
+    });
+    
+    performanceMonitor.end('duplicate-check');
+    return duplicateFound;
+  }, [firebasePayments]);
+
   // ==================== VALIDATION FUNCTION ====================
   const validateExcelVsAppPayments = useCallback((excelData, bank) => {
     const results = {
@@ -436,28 +482,6 @@ const CustomerAnalysisPage = () => {
     return customer?.CustomerName || customerId;
   }, [firebaseCustomers]);
 
-  const isAfterCutoffDate = useCallback((dateString) => {
-    if (!dateString) {
-      console.log(`⚠️ Date filter: Empty date string`);
-      return false;
-    }
-    try {
-      const date = new Date(dateString);
-      const cutoff = new Date(CUTOFF_DATE);
-      const isAfter = date >= cutoff; // Match Excel ">="&Sheet1!$C$6 logic
-      
-      // Debug date comparison for Excel formula verification
-      if (!isAfter) {
-        console.log(`📅 Date filter: ${dateString} (${date.toISOString().split('T')[0]}) is before cutoff ${CUTOFF_DATE}`);
-      }
-      
-      return isAfter;
-    } catch (error) {
-      console.log(`❌ Date filter: Invalid date "${dateString}" - ${error.message}`);
-      return false;
-    }
-  }, []);
-
   const validateDateRange = useCallback((start, end) => {
     const startDate = new Date(start);
     const endDate = new Date(end);
@@ -568,29 +592,6 @@ const CustomerAnalysisPage = () => {
   }, [addPayment]);
 
   // ==================== OPTIMIZED DUPLICATE DETECTION ====================
-  const isContextAwareDuplicate = useCallback((currentPayment, rowIndex, excelData) => {
-    if (!firebasePayments?.length) return false;
-    
-    performanceMonitor.start('duplicate-check');
-    
-    // Use Map for O(1) lookup
-    const paymentKey = `${currentPayment.customerId}_${currentPayment.date}_${Math.round(currentPayment.payment * 100)}`;
-    
-    const duplicateFound = firebasePayments.some(fbPayment => {
-      if (!fbPayment.supplierName || !fbPayment.paymentDate || !fbPayment.amount) return false;
-      
-      const fbDate = fbPayment.paymentDate.toDate ? 
-        fbPayment.paymentDate.toDate().toISOString().split('T')[0] : 
-        new Date(fbPayment.paymentDate).toISOString().split('T')[0];
-      
-      const fbKey = `${fbPayment.supplierName}_${fbDate}_${Math.round(fbPayment.amount * 100)}`;
-      return fbKey === paymentKey;
-    });
-    
-    performanceMonitor.end('duplicate-check');
-    return duplicateFound;
-  }, [firebasePayments]);
-
   // ==================== WAYBILL PROCESSING ====================
   const processWaybillsFromResponse = useCallback((data) => {
     performanceMonitor.start('extract-waybills');
@@ -1631,8 +1632,8 @@ const StartingDebtForm = ({ onAddDebt }) => {
 };
 
 const TransactionSummaryPanel = ({ transactionSummary }) => {
-  const [showDetails, setShowDetails] = useState(false);
-  const [activeTab, setActiveTab] = useState('added');
+  const [showDetails, setShowDetails] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState('added');
 
   if (!transactionSummary) return null;
 
