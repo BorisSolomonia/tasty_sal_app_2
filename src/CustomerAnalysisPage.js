@@ -185,12 +185,29 @@ const CustomerAnalysisPage = () => {
     }
     return stored;
   });
+  
+  // Cash payments state
+  const [cashPayments, setCashPayments] = useState(() =>
+    SafeStorage.get('cashPayments', {})
+  );
+  
+  // Organization starting debt correction
+  const [organizationStartingDebt, setOrganizationStartingDebt] = useState(() =>
+    SafeStorage.get('organizationStartingDebt', 0)
+  );
+  
+  const [editingCashPayment, setEditingCashPayment] = useState(null);
+  const [cashPaymentValue, setCashPaymentValue] = useState('');
+  const [showCashPaymentForm, setShowCashPaymentForm] = useState(false);
+  const [newCashPayment, setNewCashPayment] = useState({ customerId: '', amount: '', date: '' });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
   const [editingDebt, setEditingDebt] = useState(null);
   const [editDebtValue, setEditDebtValue] = useState('');
+  const [editingItem, setEditingItem] = useState({ customerId: null, type: null }); // 'startingDebt' or 'cashPayment'
+  const [editValue, setEditValue] = useState('');
   const [transactionSummary, setTransactionSummary] = useState(null);
   
   // Performance optimization: Track processing state
@@ -247,6 +264,14 @@ const CustomerAnalysisPage = () => {
   useEffect(() => {
     debouncedSave('startingDebts', startingDebts);
   }, [startingDebts, debouncedSave]);
+  
+  useEffect(() => {
+    debouncedSave('cashPayments', cashPayments);
+  }, [cashPayments, debouncedSave]);
+  
+  useEffect(() => {
+    debouncedSave('organizationStartingDebt', organizationStartingDebt);
+  }, [organizationStartingDebt, debouncedSave]);
 
   // ==================== DATE PARSING UTILITIES ====================
   const parseExcelDate = useCallback((dateValue) => {
@@ -1101,6 +1126,34 @@ const CustomerAnalysisPage = () => {
         });
       });
     }
+    
+    // Process cash payments
+    Object.entries(cashPayments).forEach(([paymentId, payment]) => {
+      if (!payment.customerId || !payment.amount) return;
+      
+      const isAfterCutoff = isAfterCutoffDate(payment.date);
+      if (!isAfterCutoff) return;
+      
+      if (!customerPayments.has(payment.customerId)) {
+        customerPayments.set(payment.customerId, {
+          totalPayments: 0,
+          paymentCount: 0,
+          payments: []
+        });
+      }
+      
+      const customer = customerPayments.get(payment.customerId);
+      customer.totalPayments += parseFloat(payment.amount) || 0;
+      customer.paymentCount += 1;
+      customer.payments.push({
+        customerId: payment.customerId,
+        payment: parseFloat(payment.amount) || 0,
+        date: payment.date,
+        isAfterCutoff,
+        source: 'cash',
+        paymentId
+      });
+    });
 
     // Combine all data
     const allCustomerIds = new Set([
@@ -1117,6 +1170,11 @@ const CustomerAnalysisPage = () => {
         totalPayments: 0, paymentCount: 0, payments: [] 
       };
       const startingDebt = startingDebts[customerId] || { amount: 0, date: null };
+      
+      // Calculate cash payments for this customer
+      const customerCashPayments = payments.payments.filter(p => p.source === 'cash');
+      const totalCashPayments = customerCashPayments.reduce((sum, p) => sum + p.payment, 0);
+      
       const currentDebt = startingDebt.amount + sales.totalSales - payments.totalPayments;
       const customerName = getCustomerName(customerId);
 
@@ -1125,6 +1183,8 @@ const CustomerAnalysisPage = () => {
         customerName,
         totalSales: sales.totalSales,
         totalPayments: payments.totalPayments,
+        totalCashPayments,
+        cashPayments: customerCashPayments,
         currentDebt,
         startingDebt: startingDebt.amount,
         startingDebtDate: startingDebt.date,
@@ -1143,7 +1203,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, isAfterCutoffDate, getCustomerName, dateRange]);
+  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, isAfterCutoffDate, getCustomerName, dateRange]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
@@ -1219,6 +1279,150 @@ const CustomerAnalysisPage = () => {
     setEditDebtValue('');
   }, []);
 
+  // ==================== CASH PAYMENT MANAGEMENT ====================
+  const addCashPayment = useCallback((customerId, amount, date) => {
+    if (!customerId?.trim()) {
+      setError('გთხოვთ, შეიყვანოთ მომხმარებლის ID');
+      return false;
+    }
+    
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      setError('გთხოვთ, შეიყვანოთ სწორი თანხა');
+      return false;
+    }
+    
+    if (!date) {
+      setError('გთხოვთ, შეარჩიოთ თარიღი');
+      return false;
+    }
+    
+    const paymentId = `cash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const newPayment = {
+      customerId: customerId.trim(),
+      amount: numericAmount,
+      date,
+      createdAt: new Date().toISOString()
+    };
+    
+    setCashPayments(prev => ({
+      ...prev,
+      [paymentId]: newPayment
+    }));
+    
+    setError('');
+    return true;
+  }, []);
+  
+  const updateCashPayment = useCallback((paymentId, amount) => {
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      setError('გთხოვთ, შეიყვანოთ სწორი თანხა');
+      return;
+    }
+    
+    setCashPayments(prev => ({
+      ...prev,
+      [paymentId]: {
+        ...prev[paymentId],
+        amount: numericAmount
+      }
+    }));
+    
+    setEditingCashPayment(null);
+    setCashPaymentValue('');
+    setError('');
+  }, []);
+  
+  const deleteCashPayment = useCallback((paymentId) => {
+    if (!window.confirm('ნამდვილად გსურთ ნაღდი გადახდის წაშლა?')) {
+      return;
+    }
+    
+    setCashPayments(prev => {
+      const updated = { ...prev };
+      delete updated[paymentId];
+      return updated;
+    });
+  }, []);
+  
+  const handleCashPaymentSubmit = useCallback((e) => {
+    e.preventDefault();
+    
+    const success = addCashPayment(
+      newCashPayment.customerId,
+      newCashPayment.amount,
+      newCashPayment.date
+    );
+    
+    if (success) {
+      setNewCashPayment({ customerId: '', amount: '', date: '' });
+      setShowCashPaymentForm(false);
+    }
+  }, [newCashPayment, addCashPayment]);
+  
+  // Organization starting debt management
+  const updateOrganizationStartingDebt = useCallback((amount) => {
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount)) {
+      setError('გთხოვთ, შეიყვანოთ სწორი თანხა');
+      return;
+    }
+    
+    setOrganizationStartingDebt(numericAmount);
+    setError('');
+  }, []);
+  
+  // Enhanced edit functions for both starting debt and cash payments
+  const startEdit = useCallback((customerId, type, currentValue) => {
+    setEditingItem({ customerId, type });
+    setEditValue(currentValue.toString());
+    setError('');
+  }, []);
+  
+  const saveEdit = useCallback(() => {
+    const { customerId, type } = editingItem;
+    const numericValue = parseFloat(editValue);
+    
+    if (isNaN(numericValue)) {
+      setError('გთხოვთ, შეიყვანოთ სწორი თანხა');
+      return;
+    }
+    
+    if (type === 'startingDebt') {
+      setStartingDebts(prev => ({
+        ...prev,
+        [customerId]: {
+          ...prev[customerId],
+          amount: numericValue,
+          date: prev[customerId]?.date || new Date().toISOString().split('T')[0]
+        }
+      }));
+    } else if (type === 'cashPayment') {
+      // Add new cash payment for this customer
+      const paymentId = `cash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setCashPayments(prev => ({
+        ...prev,
+        [paymentId]: {
+          customerId,
+          amount: numericValue,
+          date: new Date().toISOString().split('T')[0],
+          createdAt: new Date().toISOString()
+        }
+      }));
+    }
+    
+    setEditingItem({ customerId: null, type: null });
+    setEditValue('');
+    setError('');
+  }, [editingItem, editValue]);
+  
+  const cancelEdit = useCallback(() => {
+    setEditingItem({ customerId: null, type: null });
+    setEditValue('');
+    setError('');
+  }, []);
+
   // ==================== EXPORT FUNCTIONALITY ====================
   const exportResults = useCallback(() => {
     try {
@@ -1237,8 +1441,7 @@ const CustomerAnalysisPage = () => {
           'მთლიანი გადახდები': Number(customer.totalPayments.toFixed(2)),
           'მიმდინარე ვალი': Number(customer.currentDebt.toFixed(2)),
           'საწყისი ვალი': Number(customer.startingDebt.toFixed(2)),
-          'ზედდებულების რაოდენობა': customer.waybillCount,
-          'გადახდების რაოდენობა': customer.paymentCount
+          'ნაღდი გადახდები': Number((customer.totalCashPayments || 0).toFixed(2))
         }));
 
       const ws = XLSX.utils.json_to_sheet(exportData);
@@ -1582,6 +1785,172 @@ const CustomerAnalysisPage = () => {
           <h3 className="text-lg font-semibold mb-4 text-gray-700">საწყისი ვალის დამატება</h3>
           <StartingDebtForm onAddDebt={addStartingDebt} />
         </div>
+        
+        {/* Organization Starting Debt Correction */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold mb-4 text-gray-700">ორგანიზაციის საწყისი ვალი</h3>
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">ორგანიზაციის საწყისი ვალი</label>
+              <input
+                type="number"
+                step="0.01"
+                value={organizationStartingDebt || ''}
+                onChange={(e) => updateOrganizationStartingDebt(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="შეიყვანეთ ორგანიზაციის საწყისი ვალი..."
+              />
+            </div>
+            <div className="text-sm text-gray-600">
+              მიმდინარე ვალი: ₾{(parseFloat(organizationStartingDebt) || 0).toFixed(2)}
+            </div>
+          </div>
+        </div>
+        
+        {/* Cash Payment Management */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-700">ნაღდი გადახდები</h3>
+            <button
+              onClick={() => setShowCashPaymentForm(!showCashPaymentForm)}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+            >
+              {showCashPaymentForm ? 'დაამალე' : 'ნაღდი გადახდის დამატება'}
+            </button>
+          </div>
+          
+          {showCashPaymentForm && (
+            <form onSubmit={handleCashPaymentSubmit} className="mb-6 p-4 bg-gray-50 rounded-lg">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">მომხმარებლის ID</label>
+                  <input
+                    type="text"
+                    value={newCashPayment.customerId}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/[^0-9]/g, '').slice(0, 11);
+                      setNewCashPayment(prev => ({ ...prev, customerId: value }));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="შეიყვანეთ მომხმარებლის ID..."
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">თანხა</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newCashPayment.amount}
+                    onChange={(e) => setNewCashPayment(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="შეიყვანეთ თანხა..."
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">თარიღი</label>
+                  <input
+                    type="date"
+                    value={newCashPayment.date}
+                    onChange={(e) => setNewCashPayment(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCashPaymentForm(false);
+                    setNewCashPayment({ customerId: '', amount: '', date: '' });
+                  }}
+                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+                >
+                  გაუქმება
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                >
+                  დამატება
+                </button>
+              </div>
+            </form>
+          )}
+          
+          {/* Cash Payments List */}
+          {Object.keys(cashPayments).length > 0 && (
+            <div>
+              <h4 className="font-medium text-gray-700 mb-3">ნაღდი გადახდები ({Object.keys(cashPayments).length})</h4>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {Object.entries(cashPayments)
+                  .sort(([,a], [,b]) => new Date(b.date) - new Date(a.date))
+                  .map(([paymentId, payment]) => (
+                    <div key={paymentId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900">
+                          {getCustomerName(payment.customerId)} ({payment.customerId})
+                        </div>
+                        <div className="text-xs text-gray-500">{payment.date}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {editingCashPayment === paymentId ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={cashPaymentValue}
+                              onChange={(e) => setCashPaymentValue(e.target.value)}
+                              className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
+                            />
+                            <button
+                              onClick={() => updateCashPayment(paymentId, cashPaymentValue)}
+                              className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                            >
+                              შენახვა
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingCashPayment(null);
+                                setCashPaymentValue('');
+                              }}
+                              className="px-2 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600"
+                            >
+                              გაუქმება
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="font-medium text-green-600">₾{payment.amount.toFixed(2)}</span>
+                            <button
+                              onClick={() => {
+                                setEditingCashPayment(paymentId);
+                                setCashPaymentValue(payment.amount.toString());
+                              }}
+                              className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                            >
+                              შეცვლა
+                            </button>
+                            <button
+                              onClick={() => deleteCashPayment(paymentId)}
+                              className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
+                            >
+                              წაშლა
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Summary Cards */}
         {Object.keys(calculateCustomerAnalysis).length > 0 && (
@@ -1638,6 +2007,12 @@ const CustomerAnalysisPage = () => {
             startEditingDebt={startEditingDebt}
             saveDebtEdit={saveDebtEdit}
             cancelDebtEdit={cancelDebtEdit}
+            editingItem={editingItem}
+            editValue={editValue}
+            setEditValue={setEditValue}
+            startEdit={startEdit}
+            saveEdit={saveEdit}
+            cancelEdit={cancelEdit}
           />
         )}
       </div>
@@ -1920,7 +2295,13 @@ const CustomerAnalysisTable = ({
   setEditDebtValue, 
   startEditingDebt, 
   saveDebtEdit, 
-  cancelDebtEdit 
+  cancelDebtEdit,
+  editingItem,
+  editValue,
+  setEditValue,
+  startEdit,
+  saveEdit,
+  cancelEdit
 }) => {
   const [sortBy, setSortBy] = useState('currentDebt');
   const [sortOrder, setSortOrder] = useState('desc');
@@ -2024,17 +2405,17 @@ const CustomerAnalysisTable = ({
               >
                 ვალი {sortBy === 'currentDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                ზედდ.
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                გადახ.
-              </th>
               <th 
                 onClick={() => handleSort('startingDebt')}
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
               >
                 საწყისი {sortBy === 'startingDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
+              </th>
+              <th 
+                onClick={() => handleSort('totalCashPayments')}
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              >
+                ნაღდი {sortBy === 'totalCashPayments' && (sortOrder === 'desc' ? '↓' : '↑')}
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 მოქმედება
@@ -2063,34 +2444,75 @@ const CustomerAnalysisTable = ({
                   ₾{customer.currentDebt.toFixed(2)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {customer.waybillCount}
+                  {editingItem.customerId === customer.customerId && editingItem.type === 'startingDebt' ? (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-gray-500">რედაქტირება:</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        className="w-20 px-2 py-1 border border-blue-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        autoFocus
+                        placeholder="ვალი"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => startEdit(customer.customerId, 'startingDebt', customer.startingDebt)}
+                      className="text-gray-900 hover:text-blue-600 hover:underline"
+                      title="საწყისი ვალის რედაქტირება"
+                    >
+                      ₾{customer.startingDebt.toFixed(2)}
+                    </button>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">
+                  {editingItem.customerId === customer.customerId && editingItem.type === 'cashPayment' ? (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-gray-500">დამატება:</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        className="w-20 px-2 py-1 border border-green-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-green-500"
+                        autoFocus
+                        placeholder="თანხა"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => startEdit(customer.customerId, 'cashPayment', 0)}
+                      className="text-blue-600 hover:text-blue-800 hover:underline"
+                      title="ნაღდი გადახდის დამატება"
+                    >
+                      ₾{(customer.totalCashPayments || 0).toFixed(2)}
+                    </button>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {customer.paymentCount}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  ₾{customer.startingDebt.toFixed(2)}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {editingDebt === customer.customerId ? (
+                  {editingItem.customerId === customer.customerId ? (
                     <div className="flex items-center space-x-2">
                       <input
                         type="number"
                         step="0.01"
-                        value={editDebtValue}
-                        onChange={(e) => setEditDebtValue(e.target.value)}
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
                         className="w-24 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                         autoFocus
+                        placeholder={editingItem.type === 'startingDebt' ? 'საწყისი ვალი' : 'ნაღდი თანხა'}
                       />
                       <button
-                        onClick={() => saveDebtEdit(customer.customerId)}
+                        onClick={saveEdit}
                         className="text-green-600 hover:text-green-800"
                         title="შენახვა"
                       >
                         ✓
                       </button>
                       <button
-                        onClick={cancelDebtEdit}
+                        onClick={cancelEdit}
                         className="text-red-600 hover:text-red-800"
                         title="გაუქმება"
                       >
@@ -2098,12 +2520,22 @@ const CustomerAnalysisTable = ({
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => startEditingDebt(customer.customerId, customer.currentDebt)}
-                      className="text-blue-600 hover:text-blue-800 text-sm"
-                    >
-                      რედაქტირება
-                    </button>
+                    <div className="flex space-x-1">
+                      <button
+                        onClick={() => startEdit(customer.customerId, 'startingDebt', customer.startingDebt)}
+                        className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200"
+                        title="საწყისი ვალის რედაქტირება"
+                      >
+                        საწყისი
+                      </button>
+                      <button
+                        onClick={() => startEdit(customer.customerId, 'cashPayment', 0)}
+                        className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs hover:bg-green-200"
+                        title="ნაღდი გადახდის დამატება"
+                      >
+                        ნაღდი
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>
