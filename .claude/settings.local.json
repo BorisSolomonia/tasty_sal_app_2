@@ -32,7 +32,8 @@
       "Bash(npx eslint:*)",
       "Bash(timeout 5 npm start)",
       "Bash(timeout 5 npm run dev)",
-      "Bash(cmd //c:*)"
+      "Bash(cmd //c:*)",
+      "Bash(timeout 10 npm run build)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

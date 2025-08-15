@@ -250,49 +250,88 @@ const CustomerAnalysisPage = () => {
 
   // ==================== DATE PARSING UTILITIES ====================
   const parseExcelDate = useCallback((dateValue) => {
-    if (!dateValue) return null;
+    console.log(`🔍 parseExcelDate called with:`, dateValue, `(type: ${typeof dateValue})`);
+    
+    if (!dateValue) {
+      console.log(`❌ parseExcelDate: Empty dateValue`);
+      return null;
+    }
     
     // Handle Excel serial date numbers
     if (typeof dateValue === 'number') {
-      // Excel epoch starts at 1900-01-01, but Excel incorrectly treats 1900 as a leap year
-      // So we need to subtract 25569 days to get Unix epoch, then convert to date
-      const excelDate = new Date((dateValue - 25569) * 86400 * 1000);
-      
-      // Extract date components in UTC to avoid timezone shifts
+      console.log(`📊 Processing Excel serial number: ${dateValue}`);
+      // Excel uses a bogus 1900-02-29, so compensate by using 25568 (not 25569)
+      // Build from UTC millis to avoid TZ shifts
+      const excelDate = new Date((dateValue - 25568) * 86400 * 1000);
       const year = excelDate.getUTCFullYear();
       const month = excelDate.getUTCMonth();
       const day = excelDate.getUTCDate();
-      
-      // Create date string manually to avoid timezone conversion
       const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      console.log(`📅 Excel serial date ${dateValue} parsed as ${dateString}`);
+      console.log(`✅ Excel serial date ${dateValue} parsed as ${dateString}`);
       return dateString;
+      
+      // Extract date components in UTC to avoid timezone shifts
+      // const year = excelDate.getUTCFullYear();
+      // const month = excelDate.getUTCMonth();
+      // const day = excelDate.getUTCDate();
+      
+      // // Create date string manually to avoid timezone conversion
+      // const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      // console.log(`✅ Excel serial date ${dateValue} parsed as ${dateString}`);
+      // return dateString;
     }
     
     // Handle MM/DD/YYYY format string
     if (typeof dateValue === 'string') {
+      console.log(`📝 Processing string date: "${dateValue}"`);
       const mmddyyyyPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
       const match = dateValue.match(mmddyyyyPattern);
       
       if (match) {
         const [, month, day, year] = match;
+        console.log(`📅 Matched MM/DD/YYYY pattern: ${month}/${day}/${year}`);
         // Create date string directly without Date object to avoid timezone issues
         const monthStr = String(parseInt(month)).padStart(2, '0');
         const dayStr = String(parseInt(day)).padStart(2, '0');
         const dateString = `${year}-${monthStr}-${dayStr}`;
-        console.log(`📅 MM/DD/YYYY date ${dateValue} parsed as ${dateString}`);
+        console.log(`✅ MM/DD/YYYY date ${dateValue} parsed as ${dateString}`);
         return dateString;
       }
       
-      // Try parsing as regular date string
+      // Try parsing as YYYY-MM-DD format
+      const yyyymmddPattern = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
+      const yyyyMatch = dateValue.match(yyyymmddPattern);
+      if (yyyyMatch) {
+        const [, year, month, day] = yyyyMatch;
+        console.log(`📅 Matched YYYY-MM-DD pattern: ${year}-${month}-${day}`);
+        const monthStr = String(parseInt(month)).padStart(2, '0');
+        const dayStr = String(parseInt(day)).padStart(2, '0');
+        const dateString = `${year}-${monthStr}-${dayStr}`;
+        console.log(`✅ YYYY-MM-DD date ${dateValue} parsed as ${dateString}`);
+        return dateString;
+      }
+      
+      // Try parsing as regular date string with multiple approaches
       try {
-        const date = new Date(dateValue + 'T00:00:00.000Z'); // Force UTC interpretation
+        // First try: simple Date parsing
+        let date = new Date(dateValue);
         if (!isNaN(date.getTime())) {
           const year = date.getUTCFullYear();
           const month = date.getUTCMonth();
           const day = date.getUTCDate();
           const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          console.log(`📅 Regular date string ${dateValue} parsed as ${dateString}`);
+          console.log(`✅ Regular date string ${dateValue} parsed as ${dateString}`);
+          return dateString;
+        }
+        
+        // Second try: Force UTC interpretation
+        date = new Date(dateValue + 'T00:00:00.000Z');
+        if (!isNaN(date.getTime())) {
+          const year = date.getUTCFullYear();
+          const month = date.getUTCMonth();
+          const day = date.getUTCDate();
+          const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          console.log(`✅ UTC-forced date string ${dateValue} parsed as ${dateString}`);
           return dateString;
         }
       } catch (error) {
@@ -302,16 +341,17 @@ const CustomerAnalysisPage = () => {
     
     // Handle Date object
     if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+      console.log(`📆 Processing Date object:`, dateValue);
       // Extract UTC components to avoid timezone conversion
       const year = dateValue.getUTCFullYear();
       const month = dateValue.getUTCMonth();
       const day = dateValue.getUTCDate();
       const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      console.log(`📅 Date object parsed as ${dateString}`);
+      console.log(`✅ Date object parsed as ${dateString}`);
       return dateString;
     }
     
-    console.warn(`⚠️ Unable to parse date: ${dateValue} (type: ${typeof dateValue})`);
+    console.error(`❌ Unable to parse date: ${dateValue} (type: ${typeof dateValue})`);
     return null;
   }, []);
 
@@ -829,8 +869,13 @@ const CustomerAnalysisPage = () => {
         if (!customerId || String(customerId).trim() === '') continue;
 
         // Parse date using proper MM/DD/YYYY format parsing
+        console.log(`🔍 Row ${i + 1}: Processing payment amount=${payment}, customerId=${customerId}, rawDate=${row[dateColumn]}`);
         const paymentDate = parseExcelDate(row[dateColumn]);
-        if (!paymentDate) continue;
+        if (!paymentDate) {
+          console.log(`❌ Row ${i + 1}: Skipping due to null paymentDate`);
+          continue;
+        }
+        console.log(`✅ Row ${i + 1}: Successfully parsed date as ${paymentDate}`);
         
         const isAfterCutoff = isAfterCutoffDate(paymentDate);
         
