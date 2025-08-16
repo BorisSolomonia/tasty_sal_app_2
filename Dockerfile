@@ -59,7 +59,7 @@ RUN apk add --no-cache curl
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S react -u 1001
+    adduser -S nodejs -u 1001 -G nodejs
 
 # Copy built frontend files
 COPY --from=frontend-build /app/build ./frontend/build
