@@ -1,0 +1,54 @@
+# 🐳 Docker Compose for Production Deployment
+# This is a backup deployment method if GitHub Actions fails
+
+version: '3.8'
+
+services:
+  nine-tones-app:
+    image: nine-tones-app:latest
+    container_name: nine-tones-app
+    restart: unless-stopped
+    ports:
+      - "8087:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - FRONTEND_URL=http://34.30.242.142:8087
+    # Secrets will be loaded from GCP Secret Manager via env file
+    env_file:
+      - .env.runtime
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Add a backup/monitoring container
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_SCHEDULE=0 0 2 * * *  # Daily at 2 AM
+    command: --interval 86400 --cleanup nine-tones-app
+
+networks:
+  default:
+    name: nine-tones-network

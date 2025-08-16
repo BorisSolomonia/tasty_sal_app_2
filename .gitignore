@@ -65,3 +65,14 @@ docker-compose.override.yml
 
 # Deployment
 deploy-scripts/config.local.sh
+.env.runtime
+
+# GitHub Actions Runner
+.github-runner/
+
+# Security sensitive files
+*.pem
+*.key
+*.crt
+*.p12
+secrets.json

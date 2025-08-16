@@ -1,0 +1,225 @@
+name: 🚀 Deploy to GCP VM
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: nine-tones-app
+  CONTAINER_NAME: nine-tones-app
+  HOST_PORT: 8087
+  CONTAINER_PORT: 3000
+  GCP_PROJECT: nine-tones-bots-2025-468320
+  SECRET_NAME: myapp-env
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: self-hosted
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🐳 Stop and Remove Existing Container
+      run: |
+        echo "🛑 Stopping existing container..."
+        docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "Container not running"
+        docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "Container not found"
+        
+        echo "🧹 Cleaning up unused images..."
+        docker image prune -f --filter "dangling=true"
+
+    - name: 🔧 Create Production Environment File
+      run: |
+        echo "🔐 Creating production environment file..."
+        cat > .env.production.local << EOF
+        # Firebase Configuration (Build-time)
+        REACT_APP_FIREBASE_API_KEY=${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+        REACT_APP_FIREBASE_AUTH_DOMAIN=${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+        REACT_APP_FIREBASE_PROJECT_ID=${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}
+        REACT_APP_FIREBASE_STORAGE_BUCKET=${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+        REACT_APP_FIREBASE_APP_ID=${{ secrets.REACT_APP_FIREBASE_APP_ID }}
+        
+        # API Configuration
+        REACT_APP_API_URL=http://34.30.242.142:${{ env.HOST_PORT }}
+        
+        # Build Configuration
+        CI=false
+        NODE_ENV=production
+        EOF
+
+    - name: 🔧 Create Backend Environment File
+      run: |
+        echo "🔐 Creating backend environment file..."
+        cat > backend/.env.production.local << EOF
+        NODE_ENV=production
+        PORT=3001
+        FRONTEND_URL=http://34.30.242.142:${{ env.HOST_PORT }}
+        EOF
+
+    - name: 🏗️ Build Docker Image
+      run: |
+        echo "🏗️ Building Docker image..."
+        docker build \
+          --build-arg NODE_ENV=production \
+          --tag ${{ env.IMAGE_NAME }}:latest \
+          --tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+          .
+        
+        echo "✅ Build completed successfully"
+        docker images ${{ env.IMAGE_NAME }}
+
+    - name: 🔐 Fetch Runtime Secrets from GCP Secret Manager
+      run: |
+        echo "🔐 Fetching runtime secrets..."
+        
+        # Check if gcloud is authenticated
+        if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
+          echo "❌ No active gcloud authentication found"
+          echo "Please run: gcloud auth login"
+          exit 1
+        fi
+        
+        # Fetch secrets and save to file
+        gcloud secrets versions access latest \
+          --secret=${{ env.SECRET_NAME }} \
+          --project=${{ env.GCP_PROJECT }} > /tmp/runtime.env
+        
+        echo "✅ Runtime secrets fetched successfully"
+
+    - name: 🚀 Deploy Container
+      run: |
+        echo "🚀 Starting new container..."
+        
+        # Run container with secrets
+        docker run -d \
+          --name ${{ env.CONTAINER_NAME }} \
+          --restart unless-stopped \
+          --publish ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
+          --env-file /tmp/runtime.env \
+          --memory="1g" \
+          --cpus="0.5" \
+          ${{ env.IMAGE_NAME }}:latest
+        
+        # Clean up secrets file
+        rm -f /tmp/runtime.env
+        
+        echo "✅ Container started successfully"
+
+    - name: 🔍 Health Check
+      run: |
+        echo "🔍 Performing health check..."
+        
+        # Wait for container to start
+        sleep 15
+        
+        # Check if container is running
+        if ! docker ps | grep -q ${{ env.CONTAINER_NAME }}; then
+          echo "❌ Container is not running"
+          docker logs ${{ env.CONTAINER_NAME }}
+          exit 1
+        fi
+        
+        # Check HTTP health
+        max_attempts=12
+        attempt=1
+        
+        while [ $attempt -le $max_attempts ]; do
+          echo "Health check attempt $attempt/$max_attempts..."
+          
+          if curl -f --connect-timeout 10 --max-time 30 http://localhost:${{ env.HOST_PORT }}/ >/dev/null 2>&1; then
+            echo "✅ Health check passed!"
+            break
+          fi
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "❌ Health check failed after $max_attempts attempts"
+            echo "Container logs:"
+            docker logs --tail 50 ${{ env.CONTAINER_NAME }}
+            exit 1
+          fi
+          
+          sleep 10
+          attempt=$((attempt + 1))
+        done
+
+    - name: 📊 Deployment Summary
+      run: |
+        echo "📊 Deployment Summary:"
+        echo "====================="
+        echo "🐳 Container: ${{ env.CONTAINER_NAME }}"
+        echo "📦 Image: ${{ env.IMAGE_NAME }}:latest"
+        echo "🌐 URL: http://34.30.242.142:${{ env.HOST_PORT }}"
+        echo "🔧 Commit: ${{ github.sha }}"
+        echo "👤 Deployed by: ${{ github.actor }}"
+        echo "📅 Time: $(date)"
+        echo ""
+        echo "🔍 Container Status:"
+        docker ps --filter name=${{ env.CONTAINER_NAME }} --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        echo ""
+        echo "💾 Resource Usage:"
+        docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}" ${{ env.CONTAINER_NAME }}
+
+    - name: 🧹 Cleanup Old Images
+      run: |
+        echo "🧹 Cleaning up old images..."
+        
+        # Keep only the 3 most recent images
+        docker images ${{ env.IMAGE_NAME }} --format "{{.Tag}} {{.ID}}" | \
+        grep -v "latest" | \
+        sort -r | \
+        tail -n +4 | \
+        awk '{print $2}' | \
+        xargs -r docker rmi || echo "No old images to remove"
+        
+        echo "✅ Cleanup completed"
+
+  rollback:
+    name: 🔄 Rollback (Manual)
+    runs-on: self-hosted
+    if: failure() && github.event_name == 'workflow_dispatch'
+    needs: deploy
+    
+    steps:
+    - name: 🔄 Rollback to Previous Image
+      run: |
+        echo "🔄 Rolling back to previous image..."
+        
+        # Stop current container
+        docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+        docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+        
+        # Find previous image
+        PREVIOUS_IMAGE=$(docker images ${{ env.IMAGE_NAME }} --format "{{.Tag}}" | grep -v latest | head -1)
+        
+        if [ -z "$PREVIOUS_IMAGE" ]; then
+          echo "❌ No previous image found for rollback"
+          exit 1
+        fi
+        
+        echo "🔄 Rolling back to: ${{ env.IMAGE_NAME }}:$PREVIOUS_IMAGE"
+        
+        # Fetch runtime secrets
+        gcloud secrets versions access latest \
+          --secret=${{ env.SECRET_NAME }} \
+          --project=${{ env.GCP_PROJECT }} > /tmp/runtime.env
+        
+        # Start rollback container
+        docker run -d \
+          --name ${{ env.CONTAINER_NAME }} \
+          --restart unless-stopped \
+          --publish ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
+          --env-file /tmp/runtime.env \
+          --memory="1g" \
+          --cpus="0.5" \
+          ${{ env.IMAGE_NAME }}:$PREVIOUS_IMAGE
+        
+        # Cleanup
+        rm -f /tmp/runtime.env
+        
+        echo "✅ Rollback completed successfully"

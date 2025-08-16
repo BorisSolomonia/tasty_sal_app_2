@@ -1,6 +1,6 @@
-import StartingDebtForm from './components/StartingDebtForm';
-import TransactionSummaryPanel from './components/TransactionSummaryPanel';
-import CustomerAnalysisTable from './components/CustomerAnalysisTable';
+import StartingDebtForm from '../components/StartingDebtForm';
+import TransactionSummaryPanel from '../components/TransactionSummaryPanel';
+import CustomerAnalysisTable from '../components/CustomerAnalysisTable';
 
 // src/CustomerAnalysisPage.js
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -284,14 +284,11 @@ const CustomerAnalysisPage = () => {
 
   // ==================== DATE PARSING UTILITIES ====================
   const parseExcelDate = useCallback((dateValue) => {
-    // Enhanced parser that handles Excel serial numbers directly
+    // Robust, UTC-safe parser with correct 1900 leap-bug offset (25568)
     if (!dateValue && dateValue !== 0) return null;
 
     if (typeof dateValue === 'number') {
-      // Use standard Excel epoch calculation (1900-01-01 = day 1)
-      // Excel serial 45776 = 2025-04-29, so we need > 45776 for 2025-04-30+
-      // Offset 25569 accounts for Excel's 1900 leap year bug and Unix epoch difference
-      const excelDate = new Date((dateValue - 25569) * 86400 * 1000);
+      const excelDate = new Date((dateValue - 25568) * 86400 * 1000);
       const y = excelDate.getUTCFullYear();
       const m = String(excelDate.getUTCMonth() + 1).padStart(2, '0');
       const d = String(excelDate.getUTCDate()).padStart(2, '0');
@@ -299,40 +296,16 @@ const CustomerAnalysisPage = () => {
     }
 
     if (typeof dateValue === 'string') {
-      // Handle MM/DD/YYYY format with auto-detection
       const mdy = dateValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
       if (mdy) {
-        const [, firstNum, secondNum, year] = mdy;
-        const first = parseInt(firstNum);
-        const second = parseInt(secondNum);
-        
-        let month, day;
-        if (first <= 12 && second <= 12) {
-          // Ambiguous - default to MM/DD/YYYY
-          month = first;
-          day = second;
-        } else if (first > 12 && second <= 12) {
-          // First number too big for month - must be DD/MM/YYYY
-          day = first;
-          month = second;
-        } else if (first <= 12 && second > 12) {
-          // Second number too big for day - must be MM/DD/YYYY
-          month = first;
-          day = second;
-        } else {
-          // Both numbers > 12 - invalid
-          return null;
-        }
-        
-        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const [, mm, dd, yy] = mdy;
+        return `${yy}-${String(parseInt(mm)).padStart(2, '0')}-${String(parseInt(dd)).padStart(2, '0')}`;
       }
-      
       const ymd = dateValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
       if (ymd) {
         const [, yy, mm, dd] = ymd;
         return `${yy}-${String(parseInt(mm)).padStart(2, '0')}-${String(parseInt(dd)).padStart(2, '0')}`;
       }
-      
       const d = new Date(dateValue);
       if (!isNaN(d.getTime())) {
         const y = d.getUTCFullYear();
@@ -340,7 +313,13 @@ const CustomerAnalysisPage = () => {
         const day = String(d.getUTCDate()).padStart(2, '0');
         return `${y}-${m}-${day}`;
       }
-      
+      const d2 = new Date(dateValue + 'T00:00:00.000Z');
+      if (!isNaN(d2.getTime())) {
+        const y = d2.getUTCFullYear();
+        const m = String(d2.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d2.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
       return null;
     }
 
@@ -353,22 +332,6 @@ const CustomerAnalysisPage = () => {
 
     return null;
   }, []);
-
-  // Check if Excel serial number is after 45776 (29 April 2025)
-  const isAfterSerialCutoff = useCallback((serialNumber) => {
-    if (typeof serialNumber !== 'number') return false;
-    return serialNumber > 45776; // Exclude 45776, include 45777+
-  }, []);
-
-  // Enhanced date validation using both serial and parsed date
-  const isValidPaymentDate = useCallback((dateValue, parsedDate) => {
-    // If we have a serial number, use serial check (more accurate)
-    if (typeof dateValue === 'number') {
-      return isAfterSerialCutoff(dateValue);
-    }
-    // Fallback to parsed date check
-    return parsedDate && new Date(parsedDate) >= new Date(PAYMENT_WINDOW_START);
-  }, [isAfterSerialCutoff]);
 
   // WAYBILLS use CUTOFF_DATE (>= 2025-04-30)
   const isAfterCutoffDate = useCallback((dateString) => {
@@ -692,17 +655,11 @@ const CustomerAnalysisPage = () => {
   const validateExcelVsAppPayments = useCallback((excelData, bank) => {
     const results = {
       excelTotal: 0,
-      excelTotalAll: 0,
       appTotal: 0,
       transactionDetails: [],
       skippedTransactions: [],
       duplicateTransactions: [],
-      addedTransactions: [],
-      beforeWindowTransactions: [],
-      addedSum: 0,
-      duplicateSum: 0,
-      beforeWindowSum: 0,
-      skippedSum: 0
+      addedTransactions: []
     };
 
     // Column indices
@@ -756,18 +713,11 @@ const CustomerAnalysisPage = () => {
           date: paymentDateRaw || 'N/A',
           reason: 'Invalid date'
         });
-        results.skippedSum += amount;
         continue;
       }
 
-      // Add to total Excel amount (all transactions)
-      results.excelTotalAll += amount;
-
-      // Check if transaction is valid using serial number or date
-      const inPaymentWindow = isValidPaymentDate(paymentDateRaw, date);
-      if (inPaymentWindow) {
-        results.excelTotal += amount;
-      }
+      const inPaymentWindow = isInPaymentWindow(date);
+      if (inPaymentWindow) results.excelTotal += amount;
 
       const code = buildUniqueCode({
         date,
@@ -792,31 +742,16 @@ const CustomerAnalysisPage = () => {
       if (dup) {
         results.duplicateTransactions.push({
           ...paymentRecord,
-          reason: 'Duplicate uniqueCode exists',
-          serialNumber: typeof paymentDateRaw === 'number' ? paymentDateRaw : null
+          reason: 'Duplicate uniqueCode exists'
         });
-        results.duplicateSum += amount;
       } else if (inPaymentWindow) {
-        results.addedTransactions.push({
-          ...paymentRecord,
-          serialNumber: typeof paymentDateRaw === 'number' ? paymentDateRaw : null
-        });
-        results.addedSum += amount;
-      } else {
-        // Transaction is before the payment window - log it
-        results.beforeWindowTransactions.push({
-          ...paymentRecord,
-          reason: `Date before 29 April 2025 (serial: ${typeof paymentDateRaw === 'number' ? paymentDateRaw : 'N/A'})`,
-          serialNumber: typeof paymentDateRaw === 'number' ? paymentDateRaw : null
-        });
-        results.beforeWindowSum += amount;
+        results.addedTransactions.push(paymentRecord);
       }
 
       results.transactionDetails.push({
         ...paymentRecord,
         isDuplicate: dup,
-        status: dup ? 'Duplicate' : (inPaymentWindow ? 'Added' : 'Before Window'),
-        serialNumber: typeof paymentDateRaw === 'number' ? paymentDateRaw : null
+        status: dup ? 'Duplicate' : (inPaymentWindow ? 'Added' : 'Before Window')
       });
     }
 
@@ -836,19 +771,8 @@ const CustomerAnalysisPage = () => {
       });
     }
 
-    // Accounting validation: sum of all categorized transactions must equal Excel total
-    const accountingTotal = results.addedSum + results.duplicateSum + results.beforeWindowSum + results.skippedSum;
-    const accountingValidation = {
-      isValid: Math.abs(results.excelTotalAll - accountingTotal) < 0.01,
-      excelTotal: results.excelTotalAll,
-      accountingTotal: accountingTotal,
-      difference: results.excelTotalAll - accountingTotal
-    };
-    
-    results.accountingValidation = accountingValidation;
-
     return results;
-  }, [parseExcelDate, isValidPaymentDate, buildUniqueCode, allExistingCodes, firebasePayments]);
+  }, [parseExcelDate, isInPaymentWindow, buildUniqueCode, allExistingCodes, firebasePayments]);
 
   const processExcelInBatches = useCallback(async (jsonData, bank) => {
     const parsedData = [];
@@ -892,7 +816,7 @@ const CustomerAnalysisPage = () => {
         const date = parseExcelDate(row[dateCol]);
         if (!date) continue;
 
-        const include = isValidPaymentDate(row[dateCol], date);
+        const include = isInPaymentWindow(date);
         const code = buildUniqueCode({ date, amount, customerId, balance });
         if (codes.has(code)) continue;
 
@@ -903,10 +827,9 @@ const CustomerAnalysisPage = () => {
           date,
           description: row[descCol] || '',
           bank,
-          isAfterCutoff: include, // using serial number logic
+          isAfterCutoff: include, // using payment window semantics
           uniqueCode: code,
-          rowIndex: rowIndex + 1,
-          serialNumber: typeof row[dateCol] === 'number' ? row[dateCol] : null
+          rowIndex: rowIndex + 1
         };
 
         parsedData.push(rec);
@@ -943,7 +866,7 @@ const CustomerAnalysisPage = () => {
     setProgress(msg);
 
     return parsedData;
-  }, [parseExcelDate, isValidPaymentDate, buildUniqueCode, allExistingCodes, saveBankPaymentToFirebase, rememberPayment, validateExcelVsAppPayments]);
+  }, [parseExcelDate, isInPaymentWindow, buildUniqueCode, allExistingCodes, saveBankPaymentToFirebase, rememberPayment, validateExcelVsAppPayments]);
 
   const handleFileUpload = useCallback(async (bank, file) => {
     if (!file) return;
@@ -980,8 +903,8 @@ const CustomerAnalysisPage = () => {
 
       const worksheet = workbook.Sheets[sheetName];
 
-      // Use raw:true to preserve Excel serial numbers for accurate date processing
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
+      // Keep raw:false for compatibility; our parser handles both strings/serials robustly
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
 
       const parsedData = await processExcelInBatches(jsonData, bank);
 
