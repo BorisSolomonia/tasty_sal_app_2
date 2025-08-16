@@ -37,7 +37,8 @@ COPY backend/package*.json ./
 # Install ALL dependencies (including dev dependencies for TypeScript compilation)
 RUN npm ci
 
-# TypeScript is now available from dev dependencies
+# Fix binary permissions
+RUN chmod +x node_modules/.bin/*
 
 # Copy backend source and config
 COPY backend/src/ ./src/

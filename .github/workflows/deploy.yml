@@ -41,6 +41,11 @@ jobs:
         
         # Ensure npm is working
         npm --version
+        
+        # Set npm global configuration for self-hosted runner
+        npm config set fund false
+        npm config set audit false
+        
         echo "✅ Node.js and npm are ready"
 
     - name: 🐳 Stop and Remove Existing Container
@@ -86,7 +91,13 @@ jobs:
         echo "🧪 Testing TypeScript compilation..."
         cd backend
         npm install
-        npm run build
+        
+        # Fix TypeScript binary permissions
+        chmod +x node_modules/.bin/tsc
+        
+        # Use npx to run TypeScript compiler
+        npx tsc
+        
         echo "✅ TypeScript compilation successful"
 
     - name: 🏗️ Build Docker Image
