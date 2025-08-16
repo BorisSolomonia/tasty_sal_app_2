@@ -10,7 +10,7 @@ WORKDIR /app
 
 # Copy frontend package files first (better caching)
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci
 
 # Copy frontend source code and config files
 COPY src/ ./src/
@@ -33,10 +33,11 @@ WORKDIR /app
 
 # Copy backend package files
 COPY backend/package*.json ./
-RUN npm ci --only=production
 
-# Install TypeScript and build dependencies
-RUN npm install -g typescript
+# Install ALL dependencies (including dev dependencies for TypeScript compilation)
+RUN npm ci
+
+# TypeScript is now available from dev dependencies
 
 # Copy backend source and config
 COPY backend/src/ ./src/
@@ -62,10 +63,14 @@ RUN addgroup -g 1001 -S nodejs && \
 # Copy built frontend files
 COPY --from=frontend-build /app/build ./frontend/build
 
-# Copy built backend files and dependencies
+# Set up backend production dependencies
+COPY --from=backend-build /app/package*.json ./backend/
+WORKDIR /app/backend
+RUN npm ci --only=production && npm cache clean --force
+WORKDIR /app
+
+# Copy built backend files
 COPY --from=backend-build /app/dist ./backend/dist
-COPY --from=backend-build /app/node_modules ./backend/node_modules
-COPY --from=backend-build /app/package.json ./backend/
 
 # Create startup script that runs both frontend and backend
 RUN cat > start.sh << 'EOF'
