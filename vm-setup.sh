@@ -67,6 +67,22 @@ sudo apt-get install -y \
     gnupg \
     lsb-release
 
+# Install Node.js 20.x LTS
+if ! command -v node &> /dev/null; then
+    print_status "📦 Installing Node.js 20.x LTS..."
+    
+    # Add NodeSource repository
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    
+    # Install Node.js
+    sudo apt-get install -y nodejs
+    
+    print_success "✅ Node.js $(node --version) installed"
+    print_success "✅ npm $(npm --version) installed"
+else
+    print_success "✅ Node.js already installed: $(node --version)"
+fi
+
 # Install Docker if not present
 if ! command -v docker &> /dev/null; then
     print_status "🐳 Installing Docker..."
