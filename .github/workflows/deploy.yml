@@ -112,23 +112,29 @@ jobs:
         echo "✅ Build completed successfully"
         docker images ${{ env.IMAGE_NAME }}
 
-    - name: 🔐 Fetch Runtime Secrets from GCP Secret Manager
+    - name: 🔐 Create Runtime Environment File
       run: |
-        echo "🔐 Fetching runtime secrets..."
+        echo "🔐 Creating runtime environment file..."
         
-        # Check if gcloud is authenticated
-        if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
-          echo "❌ No active gcloud authentication found"
-          echo "Please run: gcloud auth login"
-          exit 1
+        # Try GCP Secret Manager first
+        if gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q . && \
+           gcloud secrets versions access latest --secret=${{ env.SECRET_NAME }} --project=${{ env.GCP_PROJECT }} > /tmp/runtime.env 2>/dev/null; then
+          echo "✅ Using GCP Secret Manager"
+        else
+          echo "⚠️ GCP Secret Manager not available, using GitHub Secrets fallback"
+          
+          # Create runtime environment from GitHub Secrets
+          cat > /tmp/runtime.env << EOF
+        NODE_ENV=production
+        PORT=3001
+        FRONTEND_URL=http://34.30.242.142:${{ env.HOST_PORT }}
+        SOAP_ENDPOINT=${{ secrets.SOAP_ENDPOINT }}
+        SOAP_SU=${{ secrets.SOAP_SU }}
+        SOAP_SP=${{ secrets.SOAP_SP }}
+        EOF
         fi
         
-        # Fetch secrets and save to file
-        gcloud secrets versions access latest \
-          --secret=${{ env.SECRET_NAME }} \
-          --project=${{ env.GCP_PROJECT }} > /tmp/runtime.env
-        
-        echo "✅ Runtime secrets fetched successfully"
+        echo "✅ Runtime environment configured"
 
     - name: 🚀 Deploy Container
       run: |
