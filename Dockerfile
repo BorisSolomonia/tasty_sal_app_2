@@ -87,7 +87,7 @@ BACKEND_PID=$!
 
 # Start frontend static server  
 echo "🌐 Starting frontend on port 3000..."
-cd .. && npx serve -s frontend/build -p 3000 &
+cd .. && npx serve -s frontend/build -p 3000 --single &
 FRONTEND_PID=$!
 
 # Function to handle shutdown
