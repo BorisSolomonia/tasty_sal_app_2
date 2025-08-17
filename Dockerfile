@@ -80,14 +80,19 @@ set -e
 
 echo "🚀 Starting 9-tones-app services..."
 
+# Debug: Show current directory and files
+echo "🔍 Current directory: $(pwd)"
+echo "🔍 Frontend build files:"
+ls -la frontend/build/ || echo "❌ frontend/build directory not found"
+
 # Start backend API server
 echo "📡 Starting backend API on port 3001..."
-cd backend && node dist/index.js &
+cd /app/backend && node dist/index.js &
 BACKEND_PID=$!
 
 # Start frontend static server  
 echo "🌐 Starting frontend on port 3000..."
-cd .. && npx serve -s frontend/build -p 3000 --single &
+cd /app && npx serve -s frontend/build -p 3000 --single &
 FRONTEND_PID=$!
 
 # Function to handle shutdown
