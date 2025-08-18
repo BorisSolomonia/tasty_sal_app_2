@@ -150,7 +150,7 @@ jobs:
             echo "🌐 Reverse Proxy: Caddy 2"
             echo "🏠 VM Host: ${{ env.VM_HOST }}"
             echo "🔗 HTTP URL: http://${{ env.VM_HOST }}"
-            echo "🎯 Target: Nine Tones App (localhost:8087)"
+            echo "🎯 Target: Nine Tones App (nine-tones-app:3000/3001)"
             echo "📅 Deployed: $(date)"
             echo "👤 By: ${{ github.actor }}"
             echo ""
