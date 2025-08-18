@@ -156,19 +156,70 @@ jobs:
           
           # Pull latest image and update to specific commit
           echo "📥 Pulling latest image..."
-          docker pull ${{ needs.build-push.outputs.image }}
+          echo "Image to pull: ${{ needs.build-push.outputs.image }}"
+          
+          # Check authentication first
+          echo "🔐 Testing GCP authentication..."
+          if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
+            echo "❌ No active GCP authentication found"
+            echo "Checking if VM has service account access..."
+            curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token >/dev/null 2>&1 && echo "✅ Service account available" || echo "❌ No service account access"
+          else
+            echo "✅ GCP authentication active"
+            gcloud auth list --filter=status:ACTIVE
+          fi
+          
+          # Try to pull the image with detailed error reporting
+          echo "🔄 Attempting image pull..."
+          if docker pull ${{ needs.build-push.outputs.image }}; then
+            echo "✅ Image pulled successfully"
+          else
+            echo "❌ Failed to pull image: ${{ needs.build-push.outputs.image }}"
+            echo "🔍 Available images in registry:"
+            gcloud container images list --repository=europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps 2>/dev/null || echo "Could not list images"
+            echo "🔍 Available tags:"
+            gcloud container images list-tags europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app --limit=5 2>/dev/null || echo "Could not list tags"
+            echo "🔍 Docker authentication status:"
+            docker system info | grep -A5 -B5 "Registry" || echo "Could not get registry info"
+            exit 1
+          fi
           
           # Tag the specific commit as latest locally
           docker tag ${{ needs.build-push.outputs.image }} \
                      europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:latest
+          
+          echo "🏷️ Images now available:"
+          docker images | grep nine-tones
           
           # Create Docker network if needed
           docker network create web 2>/dev/null || echo "Network 'web' already exists"
           
           # Deploy using Docker Compose
           echo "🚀 Starting services with Docker Compose..."
-          docker compose down --remove-orphans 2>/dev/null || echo "No existing services"
-          docker compose up -d
+          echo "📋 Docker Compose configuration:"
+          cat docker-compose.yml
+          echo ""
+          
+          # Stop any existing services
+          echo "🛑 Stopping existing services..."
+          docker compose down --remove-orphans 2>/dev/null || echo "No existing services to stop"
+          
+          # Start services with verbose output
+          echo "🌟 Starting new services..."
+          if docker compose up -d --wait; then
+            echo "✅ Docker Compose deployment successful"
+          else
+            echo "❌ Docker Compose deployment failed"
+            echo "🔍 Compose service status:"
+            docker compose ps
+            echo "🔍 Compose logs:"
+            docker compose logs
+            exit 1
+          fi
+          
+          # Verify services started
+          echo "🔍 Service verification:"
+          docker compose ps
           
           echo "✅ Deployment completed successfully"
 
