@@ -25,10 +25,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}
     outputs:
-      image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}:${{ github.sha }}
+      image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}
     
     steps:
     - name: 📥 Checkout Code
@@ -77,6 +75,8 @@ jobs:
         EOF
 
     - name: 🏗️ Build & Push Docker Image
+      env:
+        IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}
       run: |
         echo "🏗️ Building Docker image..."
         docker build \
@@ -156,11 +156,11 @@ jobs:
           
           # Pull latest image and update to specific commit
           echo "📥 Pulling latest image..."
-          docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}:${{ github.sha }}
+          docker pull ${{ needs.build-push.outputs.image }}
           
           # Tag the specific commit as latest locally
-          docker tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}:${{ github.sha }} \
-                     ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}:latest
+          docker tag ${{ needs.build-push.outputs.image }} \
+                     europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:latest
           
           # Create Docker network if needed
           docker network create web 2>/dev/null || echo "Network 'web' already exists"
@@ -248,7 +248,7 @@ jobs:
           echo "📊 Deployment Summary:"
           echo "====================="
           echo "🐳 Container: nine-tones-app"
-          echo "📦 Image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}:${{ github.sha }}"
+          echo "📦 Image: ${{ needs.build-push.outputs.image }}"
           echo "🌐 Direct Frontend: http://${{ env.VM_HOST }}:3000 (for debugging)"  
           echo "🌐 Direct API: http://${{ env.VM_HOST }}:3001/api/rs/* (for debugging)"
           echo "🌐 Production URL: http://${{ env.VM_HOST }} (requires Caddy deployment)"
