@@ -8,6 +8,15 @@ FROM node:20-alpine AS frontend-build
 
 WORKDIR /app
 
+# Accept build arguments for React environment variables
+ARG REACT_APP_FIREBASE_API_KEY
+ARG REACT_APP_FIREBASE_AUTH_DOMAIN
+ARG REACT_APP_FIREBASE_PROJECT_ID
+ARG REACT_APP_FIREBASE_STORAGE_BUCKET
+ARG REACT_APP_FIREBASE_MESSAGING_SENDER_ID
+ARG REACT_APP_FIREBASE_APP_ID
+ARG REACT_APP_API_URL
+
 # Copy frontend package files first (better caching)
 COPY package*.json ./
 RUN npm ci
@@ -17,11 +26,18 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY tailwind.config.js postcss.config.js ./
 
-# Set production build environment
+# Set build-time environment variables
 ENV CI=false
 ENV NODE_ENV=production
+ENV REACT_APP_FIREBASE_API_KEY=${REACT_APP_FIREBASE_API_KEY}
+ENV REACT_APP_FIREBASE_AUTH_DOMAIN=${REACT_APP_FIREBASE_AUTH_DOMAIN}
+ENV REACT_APP_FIREBASE_PROJECT_ID=${REACT_APP_FIREBASE_PROJECT_ID}
+ENV REACT_APP_FIREBASE_STORAGE_BUCKET=${REACT_APP_FIREBASE_STORAGE_BUCKET}
+ENV REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${REACT_APP_FIREBASE_MESSAGING_SENDER_ID}
+ENV REACT_APP_FIREBASE_APP_ID=${REACT_APP_FIREBASE_APP_ID}
+ENV REACT_APP_API_URL=${REACT_APP_API_URL}
 
-# Build the React frontend
+# Build the React frontend with correct environment variables
 RUN npm run build
 
 # ==========================

@@ -78,9 +78,16 @@ jobs:
       env:
         IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}
       run: |
-        echo "🏗️ Building Docker image..."
+        echo "🏗️ Building Docker image with build-time environment variables..."
         docker build \
           --build-arg NODE_ENV=production \
+          --build-arg REACT_APP_FIREBASE_API_KEY="${{ secrets.REACT_APP_FIREBASE_API_KEY }}" \
+          --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}" \
+          --build-arg REACT_APP_FIREBASE_PROJECT_ID="${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}" \
+          --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}" \
+          --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}" \
+          --build-arg REACT_APP_FIREBASE_APP_ID="${{ secrets.REACT_APP_FIREBASE_APP_ID }}" \
+          --build-arg REACT_APP_API_URL="http://${{ env.VM_HOST }}:3001" \
           --tag "${IMAGE}:${{ github.sha }}" \
           --tag "${IMAGE}:latest" \
           .
