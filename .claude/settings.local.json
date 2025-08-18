@@ -37,7 +37,8 @@
       "Bash(cp:*)",
       "Bash(chmod:*)",
       "Bash(docker build:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

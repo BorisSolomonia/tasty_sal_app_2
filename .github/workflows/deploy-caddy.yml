@@ -68,8 +68,8 @@ jobs:
             echo "🛑 Stopping existing Caddy container..."
             sudo docker compose down 2>/dev/null || echo "No existing Caddy container"
             
-            # Start new Caddy container
-            echo "🌟 Starting Caddy container..."
+            # Use the complete compose file with both services
+            echo "🌟 Starting Caddy with Nine Tones App stack..."
             sudo docker compose up -d
             
             # Wait for Caddy to start
