@@ -8,7 +8,7 @@ on:
 
 env:
   VM_HOST: 34.141.45.73  # Updated VM host
-  CADDY_PATH: "/opt/apps/nine-tones-caddy"
+  CADDY_PATH: "/opt/apps/nine-tones"  # Use same directory as main app
 
 jobs:
   deploy-caddy:
@@ -68,9 +68,79 @@ jobs:
             echo "🛑 Stopping existing Caddy container..."
             sudo docker compose down 2>/dev/null || echo "No existing Caddy container"
             
-            # Use the complete compose file with both services
-            echo "🌟 Starting Caddy with Nine Tones App stack..."
-            sudo docker compose up -d
+            # Check if main app is already deployed
+            if docker ps --format '{{.Names}}' | grep -q '^nine-tones-app$'; then
+              echo "✅ Nine Tones App is already running, will add Caddy to existing setup"
+              
+              # Create full stack compose file with both services
+              cat > docker-compose.yml << 'COMPOSE_EOF'
+version: "3.9"
+services:
+  nine-tones-app:
+    image: europe-west3-docker.pkg.dev/nine-tones-bots-2025-468320/apps/nine-tones-app:latest
+    container_name: nine-tones-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    networks: [web]
+    mem_limit: 1g
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    networks: [web]
+    environment:
+      - CADDY_INGRESS_NETWORKS=web
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      nine-tones-app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+    external: true
+  caddy_config:
+  caddy_logs:
+
+networks:
+  web:
+    external: true
+COMPOSE_EOF
+              
+              # Deploy full stack
+              echo "🌟 Deploying full stack (Nine Tones App + Caddy)..."
+              sudo docker compose up -d
+            else
+              echo "⚠️ Nine Tones App not found. Please deploy the main app first."
+              echo "Run: GitHub Actions -> 'Build & Deploy to GCP VM'"
+              exit 1
+            fi
             
             # Wait for Caddy to start
             sleep 10
