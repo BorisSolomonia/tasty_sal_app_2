@@ -110,6 +110,7 @@ jobs:
           # Setup deployment directory
           DEPLOY_DIR="/opt/apps/nine-tones"
           sudo mkdir -p $DEPLOY_DIR
+          sudo chown -R $USER:$USER $DEPLOY_DIR
           cd $DEPLOY_DIR
           
           # Authenticate with gcloud (VM should have service account)
@@ -117,14 +118,14 @@ jobs:
           
           # Create .env file from secrets (matching Secret Manager approach)
           echo "🔐 Creating environment file..."
-          cat > .env << EOF
+          cat > .env << 'ENV_EOF'
           NODE_ENV=production
           PORT=3001
           FRONTEND_URL=http://${{ env.VM_HOST }}
           SOAP_ENDPOINT=${{ secrets.SOAP_ENDPOINT }}
           SOAP_SU=${{ secrets.SOAP_SU }}
           SOAP_SP=${{ secrets.SOAP_SP }}
-          EOF
+          ENV_EOF
           
           # Create Docker Compose file for the app
           cat > docker-compose.yml << 'EOF'
@@ -155,8 +156,9 @@ jobs:
           EOF
           
           # Pull latest image and update to specific commit
+          IMAGE_NAME="europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
           echo "📥 Pulling latest image..."
-          echo "Image to pull: ${{ needs.build-push.outputs.image }}"
+          echo "Image to pull: $IMAGE_NAME"
           
           # Check authentication first
           echo "🔐 Testing GCP authentication..."
@@ -171,10 +173,10 @@ jobs:
           
           # Try to pull the image with detailed error reporting
           echo "🔄 Attempting image pull..."
-          if docker pull ${{ needs.build-push.outputs.image }}; then
+          if docker pull "$IMAGE_NAME"; then
             echo "✅ Image pulled successfully"
           else
-            echo "❌ Failed to pull image: ${{ needs.build-push.outputs.image }}"
+            echo "❌ Failed to pull image: $IMAGE_NAME"
             echo "🔍 Available images in registry:"
             gcloud container images list --repository=europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps 2>/dev/null || echo "Could not list images"
             echo "🔍 Available tags:"
@@ -185,7 +187,7 @@ jobs:
           fi
           
           # Tag the specific commit as latest locally
-          docker tag ${{ needs.build-push.outputs.image }} \
+          docker tag "$IMAGE_NAME" \
                      europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:latest
           
           echo "🏷️ Images now available:"
@@ -399,7 +401,7 @@ jobs:
           echo "📊 Deployment Summary:"
           echo "====================="
           echo "🐳 Container: nine-tones-app"
-          echo "📦 Image: ${{ needs.build-push.outputs.image }}"
+          echo "📦 Image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
           echo "🌐 Direct Frontend: http://${{ env.VM_HOST }}:3000 (for debugging)"  
           echo "🌐 Direct API: http://${{ env.VM_HOST }}:3001/api/rs/* (for debugging)"
           echo "🌐 Production URL: http://${{ env.VM_HOST }} (requires Caddy deployment)"
