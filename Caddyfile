@@ -1,0 +1,37 @@
+# Caddy configuration for Nine Tones App
+# Replace yourdomain.com with your actual domain
+
+{
+    # Global options
+    email your-email@domain.com  # For Let's Encrypt certificates
+    auto_https off  # Disable for IP-based setup initially
+}
+
+# HTTP setup for IP-based access
+:80 {
+    # Reverse proxy to your Nine Tones app
+    reverse_proxy localhost:8087 {
+        # Health check
+        health_uri /
+        health_interval 30s
+        health_timeout 10s
+    }
+    
+    # Logging
+    log {
+        output file /var/log/caddy/nine-tones.log
+    }
+}
+
+# HTTPS setup for domain (uncomment when you have a domain)
+# yourdomain.com {
+#     reverse_proxy localhost:8087 {
+#         health_uri /
+#         health_interval 30s
+#         health_timeout 10s
+#     }
+#     
+#     log {
+#         output file /var/log/caddy/nine-tones.log
+#     }
+# }
