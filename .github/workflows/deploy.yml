@@ -57,8 +57,8 @@ jobs:
         REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
         REACT_APP_FIREBASE_APP_ID=${{ secrets.REACT_APP_FIREBASE_APP_ID }}
         
-        # API Configuration (Caddy will proxy /api/* to backend)
-        REACT_APP_API_URL=http://${{ env.VM_HOST }}
+        # API Configuration (direct to backend port for now)
+        REACT_APP_API_URL=http://${{ env.VM_HOST }}:3001
         
         # Build Configuration
         CI=false
@@ -71,7 +71,7 @@ jobs:
         cat > backend/.env.production.local << EOF
         NODE_ENV=production
         PORT=3001
-        FRONTEND_URL=http://${{ env.VM_HOST }}
+        FRONTEND_URL=http://${{ env.VM_HOST }}:3000
         EOF
 
     - name: 🏗️ Build & Push Docker Image
@@ -121,7 +121,7 @@ jobs:
           cat > .env << 'ENV_EOF'
           NODE_ENV=production
           PORT=3001
-          FRONTEND_URL=http://${{ env.VM_HOST }}
+          FRONTEND_URL=http://${{ env.VM_HOST }}:3000
           SOAP_ENDPOINT=${{ secrets.SOAP_ENDPOINT }}
           SOAP_SU=${{ secrets.SOAP_SU }}
           SOAP_SP=${{ secrets.SOAP_SP }}
