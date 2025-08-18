@@ -76,3 +76,7 @@ deploy-scripts/config.local.sh
 *.crt
 *.p12
 secrets.json
+key-key.pub
+key-key
+New
+new.pub
