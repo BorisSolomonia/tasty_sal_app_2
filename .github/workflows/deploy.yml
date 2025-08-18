@@ -180,60 +180,160 @@ jobs:
         key: ${{ secrets.VM_SSH_KEY }}
         port: 22
         script: |
-          echo "🔍 Performing health check..."
+          echo "🔍 COMPREHENSIVE DEBUG & HEALTH CHECK"
+          echo "===================================="
           
           cd /opt/apps/nine-tones
           
-          # Wait for container to start
-          sleep 15
+          # 1. ENVIRONMENT CHECK
+          echo "📋 Environment Information:"
+          echo "Working directory: $(pwd)"
+          echo "Docker version: $(docker --version)"
+          echo "Available disk space:"
+          df -h /
+          echo "Available memory:"
+          free -h
+          echo ""
           
-          # Check if container is running
+          # 2. CONTAINER STATUS CHECK  
+          echo "🐳 Container Status Check:"
+          echo "All running containers:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"
+          echo ""
+          
           if ! docker ps | grep -q nine-tones-app; then
-            echo "❌ Container is not running"
-            docker logs nine-tones-app
+            echo "❌ CRITICAL: nine-tones-app container is not running!"
+            
+            echo "🔍 Checking if container exists (stopped):"
+            docker ps -a | grep nine-tones-app || echo "No nine-tones-app container found at all"
+            
+            echo "🔍 Recent container logs (if any):"
+            docker logs nine-tones-app 2>/dev/null || echo "No logs available"
+            
+            echo "🔍 Docker Compose status:"
+            docker compose ps 2>/dev/null || echo "No compose services found"
+            
+            echo "🔍 Available Docker images:"
+            docker images | grep nine-tones || echo "No nine-tones images found"
+            
             exit 1
           fi
           
-          # Check container health status
-          echo "🏥 Checking container health status..."
-          for i in {1..6}; do
-            health_status=$(docker inspect nine-tones-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "none")
-            echo "Health status attempt $i/6: $health_status"
+          echo "✅ Container is running, proceeding with detailed checks..."
+          
+          # 3. CONTAINER DETAILS
+          echo ""
+          echo "🔍 Container Detailed Information:"
+          docker inspect nine-tones-app --format='Container State: {{.State.Status}}'
+          docker inspect nine-tones-app --format='Started At: {{.State.StartedAt}}'
+          docker inspect nine-tones-app --format='Image: {{.Config.Image}}'
+          docker inspect nine-tones-app --format='Environment: {{.Config.Env}}'
+          echo ""
+          
+          # 4. HEALTH CHECK STATUS
+          echo "🏥 Health Check Analysis:"
+          for i in {1..8}; do
+            health_status=$(docker inspect nine-tones-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "no-healthcheck")
+            echo "[$i/8] Health status: $health_status"
             
             if [ "$health_status" = "healthy" ]; then
               echo "✅ Container health check passed!"
               break
             elif [ "$health_status" = "unhealthy" ]; then
-              echo "❌ Container is unhealthy"
-              docker logs --tail 50 nine-tones-app
-              exit 1
-            fi
-            
-            sleep 10
-          done
-          
-          # Direct HTTP health check
-          echo "🌐 Testing HTTP endpoints..."
-          max_attempts=8
-          attempt=1
-          
-          while [ $attempt -le $max_attempts ]; do
-            echo "HTTP check attempt $attempt/$max_attempts..."
-            
-            # Test frontend (port 3000 internally)
-            if docker exec nine-tones-app curl -f --connect-timeout 10 --max-time 30 http://localhost:3000/ >/dev/null 2>&1; then
-              echo "✅ Frontend health check passed!"
+              echo "❌ Container is unhealthy!"
+              echo "Health check logs:"
+              docker inspect nine-tones-app --format='{{range .State.Health.Log}}{{.Output}}{{end}}'
+              break
+            elif [ "$health_status" = "no-healthcheck" ]; then
+              echo "⚠️ No health check configured, skipping to HTTP tests"
               break
             fi
             
+            # Show recent logs during health check
+            if [ $i -eq 4 ]; then
+              echo "📋 Container logs (last 20 lines):"
+              docker logs --tail 20 nine-tones-app
+              echo ""
+            fi
+            
+            sleep 8
+          done
+          
+          # 5. PROCESS CHECK INSIDE CONTAINER
+          echo ""
+          echo "⚙️ Process Check Inside Container:"
+          docker exec nine-tones-app ps aux 2>/dev/null || echo "Could not check processes"
+          echo ""
+          
+          echo "🌐 Network Check Inside Container:"
+          docker exec nine-tones-app netstat -tlnp 2>/dev/null || echo "Could not check network ports"
+          echo ""
+          
+          # 6. HTTP ENDPOINT TESTING
+          echo "🌐 HTTP Endpoint Testing:"
+          max_attempts=10
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "[$attempt/$max_attempts] Testing HTTP endpoints..."
+            
+            # Test frontend
+            if docker exec nine-tones-app curl -f --connect-timeout 5 --max-time 15 http://localhost:3000/ >/dev/null 2>&1; then
+              echo "✅ Frontend (port 3000) is responding!"
+              frontend_ok=true
+            else
+              echo "❌ Frontend (port 3000) not responding"
+              frontend_ok=false
+            fi
+            
+            # Test backend health endpoint
+            if docker exec nine-tones-app curl -f --connect-timeout 5 --max-time 15 http://localhost:3001/health >/dev/null 2>&1; then
+              echo "✅ Backend health endpoint (port 3001) is responding!"
+              backend_ok=true
+            else
+              echo "❌ Backend health endpoint (port 3001) not responding"
+              backend_ok=false
+            fi
+            
+            # If both are working, we're good
+            if [ "$frontend_ok" = true ] && [ "$backend_ok" = true ]; then
+              echo "🎉 All HTTP endpoints are healthy!"
+              break
+            fi
+            
+            # Show what's happening in the container
+            if [ $attempt -eq 5 ]; then
+              echo ""
+              echo "📋 Mid-check container logs (last 30 lines):"
+              docker logs --tail 30 nine-tones-app
+              echo ""
+              
+              echo "🔍 Checking if files exist in container:"
+              docker exec nine-tones-app ls -la /app/ 2>/dev/null || echo "Could not list /app/"
+              docker exec nine-tones-app ls -la /app/frontend/build/ 2>/dev/null || echo "Could not list /app/frontend/build/"
+              docker exec nine-tones-app ls -la /app/backend/dist/ 2>/dev/null || echo "Could not list /app/backend/dist/"
+              echo ""
+            fi
+            
             if [ $attempt -eq $max_attempts ]; then
-              echo "❌ HTTP health check failed after $max_attempts attempts"
-              echo "Container logs:"
+              echo ""
+              echo "❌ HTTP HEALTH CHECK FAILED AFTER $max_attempts ATTEMPTS"
+              echo "=================================================="
+              echo ""
+              echo "🔍 FINAL DEBUG INFO:"
+              echo "Container logs (last 50 lines):"
               docker logs --tail 50 nine-tones-app
+              echo ""
+              echo "Container environment:"
+              docker exec nine-tones-app env 2>/dev/null || echo "Could not get environment"
+              echo ""
+              echo "Container startup script:"
+              docker exec nine-tones-app cat /app/start.sh 2>/dev/null || echo "Could not read startup script"
+              echo ""
               exit 1
             fi
             
-            sleep 10
+            sleep 8
             attempt=$((attempt + 1))
           done
 
