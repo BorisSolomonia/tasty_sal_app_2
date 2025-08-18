@@ -74,46 +74,44 @@ WORKDIR /app
 COPY --from=backend-build /app/dist ./backend/dist
 
 # Create startup script that runs both frontend and backend
-RUN cat > start.sh << 'EOF'
-#!/bin/sh
-set -e
-
-echo "🚀 Starting 9-tones-app services..."
-
-# Debug: Show current directory and files
-echo "🔍 Current directory: $(pwd)"
-echo "🔍 Frontend build files:"
-ls -la frontend/build/ || echo "❌ frontend/build directory not found"
-
-# Start backend API server
-echo "📡 Starting backend API on port 3001..."
-cd /app/backend && node dist/index.js &
-BACKEND_PID=$!
-
-# Start frontend static server  
-echo "🌐 Starting frontend on port 3000..."
-cd /app && npx serve -s frontend/build -p 3000 --single &
-FRONTEND_PID=$!
-
-# Function to handle shutdown
-shutdown() {
-    echo "🛑 Shutting down services..."
-    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-    echo "✅ Services stopped"
-    exit 0
-}
-
-# Handle shutdown signals
-trap shutdown SIGTERM SIGINT
-
-echo "✅ Both services started successfully"
-echo "   Frontend: http://localhost:3000"
-echo "   Backend API: http://localhost:3001"
-
-# Wait for both processes
-wait $BACKEND_PID $FRONTEND_PID
-EOF
+RUN printf '#!/bin/sh\n\
+set -e\n\
+\n\
+echo "🚀 Starting 9-tones-app services..."\n\
+\n\
+# Debug: Show current directory and files\n\
+echo "🔍 Current directory: $(pwd)"\n\
+echo "🔍 Frontend build files:"\n\
+ls -la frontend/build/ || echo "❌ frontend/build directory not found"\n\
+\n\
+# Start backend API server\n\
+echo "📡 Starting backend API on port 3001..."\n\
+cd /app/backend && node dist/index.js &\n\
+BACKEND_PID=$!\n\
+\n\
+# Start frontend static server\n\
+echo "🌐 Starting frontend on port 3000..."\n\
+cd /app && npx serve -s frontend/build -p 3000 --single &\n\
+FRONTEND_PID=$!\n\
+\n\
+# Function to handle shutdown\n\
+shutdown() {\n\
+    echo "🛑 Shutting down services..."\n\
+    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true\n\
+    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null || true\n\
+    echo "✅ Services stopped"\n\
+    exit 0\n\
+}\n\
+\n\
+# Handle shutdown signals\n\
+trap shutdown SIGTERM SIGINT\n\
+\n\
+echo "✅ Both services started successfully"\n\
+echo "   Frontend: http://localhost:3000"\n\
+echo "   Backend API: http://localhost:3001"\n\
+\n\
+# Wait for both processes\n\
+wait $BACKEND_PID $FRONTEND_PID\n' > start.sh
 
 # Make startup script executable
 RUN chmod +x start.sh
