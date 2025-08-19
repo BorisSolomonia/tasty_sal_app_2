@@ -1,102 +1,44 @@
-# Global options
+# Global options (keep simple while on bare IP)
 {
-    email your-email@domain.com
-    auto_https off   # keep off while you use raw IP
+    # email you@example.com   # (uncomment when you add a domain/TLS)
+    auto_https off           # keep off on IP; enable when you use a domain
 }
 
 :80 {
-# 1 API first (matched by path) -> backend on 3001
-    @api path /api/*
-    handle @api {
-        reverse_proxy nine-tones-app:3001
-        # Optional, correct health checks block if you really want it:
-        # health_checks {
-        #   active {
-        #     path /health
-        #     interval 30s
-        #     timeout 10s
-        #   }
-        # }
-    }
+  # Access log to stdout (you already saw this working)
+  log {
+    output stdout
+    format console
+  }
 
-# 2 Everything else -> SPA on 3000
-    handle {
-        reverse_proxy nine-tones-app:3000
-    }
+  # --- Optional: drop obviously-bad methods (scanner noise) ---
+  @connect method CONNECT
+  respond @connect 405
 
-# Log to stdout so `docker logs` works
-    log {
-        output stdout
-        format json
-    }
-}
-
-
-
-
-
-
-
-
-<!-- # Caddy configuration for Nine Tones App
-# Standardized reverse proxy configuration
-
-{
-    # Global options
-    email your-email@domain.com  # For Let's Encrypt certificates
-    auto_https off  # Disable for IP-based setup initially
-}
-
-# HTTP setup for IP-based access
-:80 {
-    # Reverse proxy to Nine Tones app container
-    reverse_proxy nine-tones-app:3000 {
-        # Health check
-        health_uri /
-        health_interval 30s
-        health_timeout 10s
-        health_status 2xx
-    }
-    
-    # API routes proxy to backend
-    handle /api/* {
-        reverse_proxy nine-tones-app:3001 {
-            health_uri /health
-            health_interval 30s  
-            health_timeout 10s
-            health_status 2xx
+  # --- API first: route /api/* to backend on 3001 ---
+  @api path /api/*
+  handle @api {
+    reverse_proxy nine-tones-app:3001 {
+      health_checks {
+        active {
+          path /health
+          interval 30s
+          timeout 10s
+          expect_status 200
         }
+      }
     }
-    
-    # Logging
-    log {
-        output file /var/log/caddy/nine-tones.log
-        format json
-    }
-}
+  }
 
-# HTTPS setup for domain (uncomment when you have a domain)
-# yourdomain.com {
-#     # Frontend routes
-#     reverse_proxy nine-tones-app:3000 {
-#         health_uri /
-#         health_interval 30s
-#         health_timeout 10s  
-#         health_status 2xx
-#     }
-#     
-#     # API routes
-#     handle /api/* {
-#         reverse_proxy nine-tones-app:3001 {
-#             health_uri /health
-#             health_interval 30s
-#             health_timeout 10s
-#             health_status 2xx
-#         }
-#     }
-#     
-#     log {
-#         output file /var/log/caddy/nine-tones.log
-#         format json
-#     }
-# } -->
+  # --- Frontend SPA on 3000 ---
+  reverse_proxy nine-tones-app:3000 {
+    health_checks {
+      active {
+        path /
+        interval 30s
+        timeout 10s
+        expect_status 200
+      }
+    }
+  }
+}
