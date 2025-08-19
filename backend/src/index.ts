@@ -49,12 +49,21 @@ const ALLOWED_OPERATIONS = new Set<string>([
   "get_waybills_v1",
 ]);
 
-// Health check endpoint
+// Health check endpoints
 app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy", 
     timestamp: new Date().toISOString(),
     service: "9-tones-backend" 
+  });
+});
+
+// Health check endpoint for API route (used by deployment scripts)
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "healthy", 
+    timestamp: new Date().toISOString(),
+    service: "9-tones-backend-api" 
   });
 });
 
