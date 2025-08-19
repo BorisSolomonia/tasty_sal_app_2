@@ -120,50 +120,38 @@ const isContextAwareDuplicate = (currentPayment, rowIndex, excelData) => {
 - **Seller**: Order entry, customer management, order summaries
 - **Purchase Manager**: Order processing, supplier assignment, accounts payable, aggregated reporting
 
-## Deployment to GCP
+## Deployment to GCP VM
 
-### Quick Deploy
-```bash
-# Make script executable and run
-chmod +x deploy-scripts/build-and-deploy.sh
-./deploy-scripts/build-and-deploy.sh YOUR_PROJECT_ID us-central1
+### 🚀 Unified Deployment (Current System)
+**Automatic deployment on every GitHub push to master:**
+
+```
+GitHub Push → deploy-unified.yml → Artifact Registry → VM Full Stack Deploy
 ```
 
-### Manual Deployment Steps
-1. **Configure Environment Variables**:
-   - Copy `.env.production` to `.env.production.local`
-   - Copy `backend/.env.production` to `backend/.env.production.local`
-   - Fill in production Firebase and RS.ge credentials
+**Manual deployment:**
+```bash
+# Trigger via GitHub Actions UI or CLI
+gh workflow run deploy-unified.yml
+```
 
-2. **Build and Deploy**:
-   ```bash
-   # Build Docker image
-   docker build -t gcr.io/PROJECT_ID/9-tones-app:latest .
-   
-   # Push to Google Container Registry
-   gcloud auth configure-docker
-   docker push gcr.io/PROJECT_ID/9-tones-app:latest
-   
-   # Deploy to Cloud Run
-   gcloud run deploy 9-tones-app \
-     --image=gcr.io/PROJECT_ID/9-tones-app:latest \
-     --platform=managed \
-     --region=us-central1 \
-     --allow-unauthenticated
-   ```
+### 📋 Deployment Architecture
+- **Frontend**: React app (internal port 3000, accessed via Caddy)
+- **Backend**: Express.js API server (internal port 3001, accessed via Caddy /api/*)
+- **Reverse Proxy**: Caddy handles all external traffic on port 80/443
+- **Container Orchestration**: Docker Compose with unified stack
+- **Image Registry**: Google Artifact Registry (europe-west3)
+- **VM Target**: GCP Compute Engine (34.141.45.73)
 
-3. **Set up Secrets** (for RS.ge API):
-   ```bash
-   gcloud secrets create rs-api-config --data-file=secrets.json
-   ```
+### 🔧 Production Files
+- **`compose.yml`**: Production deployment configuration (app + Caddy)
+- **`Caddyfile`**: Reverse proxy routing configuration  
+- **`.github/workflows/deploy-unified.yml`**: Automated deployment workflow
 
-### Deployment Architecture
-- **Frontend**: React app served as static files on port 3000
-- **Backend**: Express.js API server on port 3001
-- **Container**: Multi-stage Docker build with both services
-- **Health Checks**: `/health` endpoint for load balancer probes
-- **Secrets**: RS.ge credentials stored in Google Secret Manager
-- **CORS**: Production-ready configuration with environment-based origins
+### ⚠️ Deprecated Files
+- `deploy-OLD-BROKEN.yml`: Old split app deployment (DO NOT USE)
+- `deploy-caddy-OLD-SEPARATE.yml`: Old separate Caddy deployment (DO NOT USE)
+- Manual deployment scripts: Replaced by GitHub Actions
 
 ### Environment Variables Required
 

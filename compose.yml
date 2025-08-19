@@ -1,5 +1,6 @@
-# Docker Compose for Nine Tones App with Caddy Reverse Proxy
-# Standardized configuration matching project architecture
+# 🚀 PRODUCTION DEPLOYMENT - Unified Full Stack
+# This is the ONLY file used for production deployment via GitHub Actions
+# Contains both Nine Tones App + Caddy reverse proxy configuration
 
 version: "3.9"
 
@@ -46,8 +47,6 @@ services:
       - caddy_logs:/var/log/caddy
     
     networks: [web]
-    
- 
     
     # Resource limits  
     mem_limit: 128m
