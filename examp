@@ -571,7 +571,6 @@
 # Do you have domains now, or will you run on the VM IP first?
 
 # What’s the compose service name you want for the app? (I defaulted to myapp.)
-
 # List your environment variables (for Secret Manager), and which ports does your app expose (frontend/API)?
 
 # Answer those, commit this layout, and you’ll be able to rinse-and-repeat on any new VM or app with minimal edits.
