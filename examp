@@ -572,7 +572,6 @@
 
 # What’s the compose service name you want for the app? (I defaulted to myapp.)
 # List your environment variables (for Secret Manager), and which ports does your app expose (frontend/API)?
-
-# Answer those, commit this layout, and you’ll beლ able to rinse-and-repeat on any new VM or app with minimal edits.
+# Answer those, commit this layout,,, and you’ll beლ able to rinse-and-repeat on any new VM or app with minimal edits.
 
 # If you want, I can generate these files into a starter repo scaffold for you (with your exact PROJECT_ID, REGION, AR_REPO, etc.) so you just fill in the secret values and push.'
