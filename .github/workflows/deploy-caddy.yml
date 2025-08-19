@@ -108,8 +108,7 @@ services:
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
     networks: [web]
-    environment:
-      - CADDY_INGRESS_NETWORKS=web
+
     mem_limit: 128m
     cpus: "0.25"
     healthcheck:

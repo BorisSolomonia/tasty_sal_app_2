@@ -1,3 +1,7 @@
+# Docker Compose for LOCAL DEVELOPMENT
+# This exposes direct ports for development/testing
+# For production deployment, use compose.yml with Caddy reverse proxy
+
 version: '3.8'
 
 services:
@@ -18,7 +22,7 @@ services:
       # - REACT_APP_FIREBASE_STORAGE_BUCKET=your_storage_bucket
       # - REACT_APP_FIREBASE_MESSAGING_SENDER_ID=your_sender_id  
       # - REACT_APP_FIREBASE_APP_ID=your_app_id
-      # - REACT_APP_API_URL=http://localhost:3001
+      # - REACT_APP_API_URL=http://localhost:3001  # Base URL - frontend adds /api/rs/ to requests
       # Backend environment variables
       # - SOAP_ENDPOINT=your_rs_ge_endpoint
       # - SOAP_SU=your_username:user_id  

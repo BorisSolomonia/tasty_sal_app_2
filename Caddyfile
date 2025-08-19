@@ -1,0 +1,19 @@
+:80 {
+  log {
+    output stdout
+    format console
+  }
+
+  # Static frontend
+  reverse_proxy nine-tones-app:3000
+
+  # API under same origin
+  handle_path /api/* {
+    reverse_proxy nine-tones-app:3001
+  }
+
+  @health { path /health }
+  respond @health 200
+
+  encode gzip zstd
+}

@@ -47,8 +47,7 @@ services:
     
     networks: [web]
     
-    environment:
-      - CADDY_INGRESS_NETWORKS=web
+ 
     
     # Resource limits  
     mem_limit: 128m

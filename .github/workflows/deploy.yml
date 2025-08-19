@@ -57,8 +57,9 @@ jobs:
         REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
         REACT_APP_FIREBASE_APP_ID=${{ secrets.REACT_APP_FIREBASE_APP_ID }}
         
-        # API Configuration (direct to backend port for now)
-        REACT_APP_API_URL=http://${{ env.VM_HOST }}:3001
+        # API Configuration (through Caddy reverse proxy)
+        # Note: Frontend adds /api/rs/ to requests, so base URL should be the VM host
+        REACT_APP_API_URL=http://${{ env.VM_HOST }}
         
         # Build Configuration
         CI=false
@@ -71,7 +72,7 @@ jobs:
         cat > backend/.env.production.local << EOF
         NODE_ENV=production
         PORT=3001
-        FRONTEND_URL=http://${{ env.VM_HOST }}:3000
+        FRONTEND_URL=http://${{ env.VM_HOST }}
         EOF
 
     - name: 🏗️ Build & Push Docker Image
@@ -87,7 +88,7 @@ jobs:
           --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}" \
           --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}" \
           --build-arg REACT_APP_FIREBASE_APP_ID="${{ secrets.REACT_APP_FIREBASE_APP_ID }}" \
-          --build-arg REACT_APP_API_URL="http://${{ env.VM_HOST }}:3001" \
+          --build-arg REACT_APP_API_URL="http://${{ env.VM_HOST }}" \
           --tag "${IMAGE}:${{ github.sha }}" \
           --tag "${IMAGE}:latest" \
           .
@@ -134,7 +135,7 @@ jobs:
           SOAP_SP=${{ secrets.SOAP_SP }}
           ENV_EOF
           
-          # Create Docker Compose file for the app
+          # Use existing compose.yml for app-only deployment (no Caddy yet)
           cat > docker-compose.yml << 'EOF'
           version: "3.9"
           services:
@@ -144,10 +145,10 @@ jobs:
               restart: unless-stopped
               env_file:
                 - .env
-              ports:
-                # Temporary direct access ports (for debugging/fallback)
-                - "3000:3000" # Frontend
-                - "3001:3001" # Backend API
+              # NO DIRECT PORTS - must use Caddy for access
+              expose:
+                - "3000"  # Frontend port
+                - "3001"  # Backend API port
               networks: [web]
               mem_limit: 1g
               cpus: "0.5"
@@ -409,10 +410,8 @@ jobs:
           echo "====================="
           echo "🐳 Container: nine-tones-app"
           echo "📦 Image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
-          echo "🌐 Direct Frontend: http://${{ env.VM_HOST }}:3000 (for debugging)"  
-          echo "🌐 Direct API: http://${{ env.VM_HOST }}:3001/api/rs/* (for debugging)"
           echo "🌐 Production URL: http://${{ env.VM_HOST }} (requires Caddy deployment)"
-          echo "🔄 Deploy Caddy next for production access"
+          echo "🔄 Deploy Caddy next for web access - no direct port access available"
           echo "🔧 Commit: ${{ github.sha }}"
           echo "👤 Deployed by: ${{ github.actor }}"
           echo "📅 Time: $(date)"
