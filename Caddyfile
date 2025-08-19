@@ -12,7 +12,9 @@
     reverse_proxy nine-tones-app:3001
   }
 
-  @health { path /health }
+  @health {
+    path /health
+  }
   respond @health 200
 
   encode gzip zstd
