@@ -7,8 +7,8 @@
   # Static frontend
   reverse_proxy nine-tones-app:3000
 
-  # API under same origin
-  handle_path /api/* {
+  # API under same origin - preserve /api prefix
+  handle /api/* {
     reverse_proxy nine-tones-app:3001
   }
 
