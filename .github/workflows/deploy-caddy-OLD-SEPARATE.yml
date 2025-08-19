@@ -1,10 +1,12 @@
-name: 🌐 Deploy Caddy Reverse Proxy
+name: 🚫 DISABLED - Deploy Caddy Reverse Proxy (OLD)
 
+# DISABLED - This workflow is deprecated. Use deploy.yml instead.
 on:
-  push:
-    branches: [ master ]  # Updated to match project branch
-    paths: [ "Caddyfile", "compose.yml", ".github/workflows/deploy-caddy.yml" ]
-  workflow_dispatch:     # Allow manual deployment
+  # Commented out to disable automatic triggers
+  # push:
+  #   branches: [ master ]
+  #   paths: [ "Caddyfile", "compose.yml", ".github/workflows/deploy-caddy.yml" ]
+  workflow_dispatch:     # Keep manual trigger for emergency use only
 
 env:
   VM_HOST: 34.141.45.73  # Updated VM host

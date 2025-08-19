@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     
     env_file:
-      - .env  # Created on VM from Secret Manager during deploy
+      - .env  # Fetched from GCP Secret Manager 'myapp-env' during deployment
     
     expose:
       - "3000"  # Frontend port

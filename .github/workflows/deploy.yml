@@ -122,16 +122,21 @@ jobs:
           # Authenticate with GCP
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
           
-          # Create runtime environment file
-          echo "🔐 Creating runtime environment file..."
-          cat > .env << 'ENV_EOF'
-          NODE_ENV=production
-          PORT=3001
-          FRONTEND_URL=http://${{ env.VM_HOST }}
-          SOAP_ENDPOINT=${{ secrets.SOAP_ENDPOINT }}
-          SOAP_SU=${{ secrets.SOAP_SU }}
-          SOAP_SP=${{ secrets.SOAP_SP }}
-          ENV_EOF
+          # Create runtime environment file from GCP Secret Manager
+          echo "🔐 Fetching runtime environment from Secret Manager..."
+          TMPENV="$(mktemp)"
+          gcloud secrets versions access latest --secret=myapp-env --project=${{ secrets.GCP_PROJECT_ID }} > "$TMPENV"
+          
+          # Add deployment-specific variables
+          echo "" >> "$TMPENV"
+          echo "NODE_ENV=production" >> "$TMPENV"
+          echo "PORT=3001" >> "$TMPENV"
+          echo "FRONTEND_URL=http://${{ env.VM_HOST }}" >> "$TMPENV"
+          
+          # Move to deployment location
+          mv "$TMPENV" .env
+          
+          echo "✅ Environment file created from Secret Manager"
           
           # Create necessary Docker resources
           echo "🌐 Setting up Docker resources..."

@@ -1,8 +1,10 @@
-name: 🚀 Build & Deploy to GCP VM
+name: 🚫 DISABLED - Build & Deploy to GCP VM (OLD BROKEN)
 
+# DISABLED - This workflow is deprecated and broken. Use deploy.yml instead.
 on:
-  push:
-    branches: [ master ]
+  # Commented out to disable automatic triggers  
+  # push:
+  #   branches: [ master ]
   workflow_dispatch:
 
 env:
