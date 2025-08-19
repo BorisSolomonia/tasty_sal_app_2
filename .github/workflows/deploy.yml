@@ -96,7 +96,7 @@ jobs:
         docker push "${IMAGE}:${{ github.sha }}"
         docker push "${IMAGE}:latest"
         
-        echo "✅ Build and push completed successfully"
+        echo "✅ Build and push completed successfully with SOAP secrets"
 
   deploy:
     name: 🚀 Deploy to VM
