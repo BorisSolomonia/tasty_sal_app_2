@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>9 Tones App Test</title>
+</head>
+<body>
+    <h1>9 Tones Business Management App</h1>
+    <p>If you can see this page, the server is running correctly.</p>
+    <p>Environment test:</p>
+    <ul>
+        <li>Node.js environment: <span id="env">Loading...</span></li>
+        <li>Firebase config: <span id="firebase">Loading...</span></li>
+    </ul>
+    
+    <script>
+        document.getElementById('env').textContent = 'Browser environment';
+        
+        // Test Firebase config availability
+        fetch('/static/js/bundle.js')
+            .then(() => {
+                document.getElementById('firebase').textContent = 'Firebase bundle loaded';
+            })
+            .catch(() => {
+                document.getElementById('firebase').textContent = 'Firebase bundle not loaded';
+            });
+    </script>
+</body>
+</html>

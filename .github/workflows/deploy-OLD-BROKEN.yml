@@ -1,0 +1,444 @@
+name: 🚫 DISABLED - Build & Deploy to GCP VM (OLD BROKEN)
+
+# DISABLED - This workflow is deprecated and broken. Use deploy.yml instead.
+on:
+  # Commented out to disable automatic triggers  
+  # push:
+  #   branches: [ master ]
+  workflow_dispatch:
+
+env:
+  # Container Configuration
+  CONTAINER_NAME: nine-tones-app
+  
+  # GCP Configuration
+  REGION: europe-west3
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REPO: apps
+  APP: nine-tones-app
+  
+  # VM Configuration
+  VM_HOST: 34.141.45.73
+
+jobs:
+  build-push:
+    name: 🏗️ Build & Push to Artifact Registry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: ☁️ Set up Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: 🐳 Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+    - name: 🔧 Create Production Environment File
+      run: |
+        echo "🔐 Creating production environment file..."
+        cat > .env.production.local << EOF
+        # Firebase Configuration (Build-time)
+        REACT_APP_FIREBASE_API_KEY=${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+        REACT_APP_FIREBASE_AUTH_DOMAIN=${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+        REACT_APP_FIREBASE_PROJECT_ID=${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}
+        REACT_APP_FIREBASE_STORAGE_BUCKET=${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+        REACT_APP_FIREBASE_APP_ID=${{ secrets.REACT_APP_FIREBASE_APP_ID }}
+        
+        # API Configuration (through Caddy reverse proxy)
+        # Note: Frontend adds /api/rs/ to requests, so base URL should be the VM host
+        REACT_APP_API_URL=http://${{ env.VM_HOST }}
+        
+        # Build Configuration
+        CI=false
+        NODE_ENV=production
+        EOF
+
+    - name: 🔧 Create Backend Environment File
+      run: |
+        echo "🔐 Creating backend environment file..."
+        cat > backend/.env.production.local << EOF
+        NODE_ENV=production
+        PORT=3001
+        FRONTEND_URL=http://${{ env.VM_HOST }}
+        EOF
+
+    - name: 🏗️ Build & Push Docker Image
+      env:
+        IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}
+      run: |
+        echo "🏗️ Building Docker image with build-time environment variables..."
+        docker build \
+          --build-arg NODE_ENV=production \
+          --build-arg REACT_APP_FIREBASE_API_KEY="${{ secrets.REACT_APP_FIREBASE_API_KEY }}" \
+          --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}" \
+          --build-arg REACT_APP_FIREBASE_PROJECT_ID="${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}" \
+          --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}" \
+          --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}" \
+          --build-arg REACT_APP_FIREBASE_APP_ID="${{ secrets.REACT_APP_FIREBASE_APP_ID }}" \
+          --build-arg REACT_APP_API_URL="http://${{ env.VM_HOST }}" \
+          --tag "${IMAGE}:${{ github.sha }}" \
+          --tag "${IMAGE}:latest" \
+          .
+        
+        echo "📤 Pushing to Artifact Registry..."
+        docker push "${IMAGE}:${{ github.sha }}"
+        docker push "${IMAGE}:latest"
+        
+        echo "✅ Build and push completed successfully with SOAP secrets"
+
+  deploy:
+    name: 🚀 Deploy to VM
+    needs: build-push
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Deploy to VM via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        script: |
+          echo "🚀 Starting deployment on VM..."
+          
+          # Setup deployment directory
+          DEPLOY_DIR="/opt/apps/nine-tones"
+          sudo mkdir -p $DEPLOY_DIR
+          sudo chown -R $USER:$USER $DEPLOY_DIR
+          cd $DEPLOY_DIR
+          
+          # Authenticate with gcloud (VM should have service account)
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          
+          # Create .env file from secrets (matching Secret Manager approach)
+          echo "🔐 Creating environment file..."
+          cat > .env << 'ENV_EOF'
+          NODE_ENV=production
+          PORT=3001
+          FRONTEND_URL=http://${{ env.VM_HOST }}:3000
+          SOAP_ENDPOINT=${{ secrets.SOAP_ENDPOINT }}
+          SOAP_SU=${{ secrets.SOAP_SU }}
+          SOAP_SP=${{ secrets.SOAP_SP }}
+          ENV_EOF
+          
+          # Use existing compose.yml for app-only deployment (no Caddy yet)
+          cat > docker-compose.yml << 'EOF'
+          version: "3.9"
+          services:
+            nine-tones-app:
+              image: europe-west3-docker.pkg.dev/nine-tones-bots-2025-468320/apps/nine-tones-app:latest
+              container_name: nine-tones-app
+              restart: unless-stopped
+              env_file:
+                - .env
+              # NO DIRECT PORTS - must use Caddy for access
+              expose:
+                - "3000"  # Frontend port
+                - "3001"  # Backend API port
+              networks: [web]
+              mem_limit: 1g
+              cpus: "0.5"
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+                start_period: 30s
+          networks:
+            web:
+              external: true
+          EOF
+          
+          # Pull latest image and update to specific commit
+          IMAGE_NAME="europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
+          echo "📥 Pulling latest image..."
+          echo "Image to pull: $IMAGE_NAME"
+          
+          # Check authentication first
+          echo "🔐 Testing GCP authentication..."
+          if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
+            echo "❌ No active GCP authentication found"
+            echo "Checking if VM has service account access..."
+            curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token >/dev/null 2>&1 && echo "✅ Service account available" || echo "❌ No service account access"
+          else
+            echo "✅ GCP authentication active"
+            gcloud auth list --filter=status:ACTIVE
+          fi
+          
+          # Try to pull the image with detailed error reporting
+          echo "🔄 Attempting image pull..."
+          if docker pull "$IMAGE_NAME"; then
+            echo "✅ Image pulled successfully"
+          else
+            echo "❌ Failed to pull image: $IMAGE_NAME"
+            echo "🔍 Available images in registry:"
+            gcloud container images list --repository=europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps 2>/dev/null || echo "Could not list images"
+            echo "🔍 Available tags:"
+            gcloud container images list-tags europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app --limit=5 2>/dev/null || echo "Could not list tags"
+            echo "🔍 Docker authentication status:"
+            docker system info | grep -A5 -B5 "Registry" || echo "Could not get registry info"
+            exit 1
+          fi
+          
+          # Tag the specific commit as latest locally
+          docker tag "$IMAGE_NAME" \
+                     europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:latest
+          
+          echo "🏷️ Images now available:"
+          docker images | grep nine-tones
+          
+          # Create Docker network if needed
+          docker network create web 2>/dev/null || echo "Network 'web' already exists"
+          
+          # Deploy using Docker Compose
+          echo "🚀 Starting services with Docker Compose..."
+          echo "📋 Docker Compose configuration:"
+          cat docker-compose.yml
+          echo ""
+          
+          # Stop any existing services
+          echo "🛑 Stopping existing services..."
+          docker compose down --remove-orphans 2>/dev/null || echo "No existing services to stop"
+          
+          # Start services with verbose output
+          echo "🌟 Starting new services..."
+          if docker compose up -d --wait; then
+            echo "✅ Docker Compose deployment successful"
+          else
+            echo "❌ Docker Compose deployment failed"
+            echo "🔍 Compose service status:"
+            docker compose ps
+            echo "🔍 Compose logs:"
+            docker compose logs
+            exit 1
+          fi
+          
+          # Verify services started
+          echo "🔍 Service verification:"
+          docker compose ps
+          
+          echo "✅ Deployment completed successfully"
+
+    - name: 🔍 Health Check via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        script: |
+          echo "🔍 COMPREHENSIVE DEBUG & HEALTH CHECK"
+          echo "===================================="
+          
+          cd /opt/apps/nine-tones
+          
+          # 1. ENVIRONMENT CHECK
+          echo "📋 Environment Information:"
+          echo "Working directory: $(pwd)"
+          echo "Docker version: $(docker --version)"
+          echo "Available disk space:"
+          df -h /
+          echo "Available memory:"
+          free -h
+          echo ""
+          
+          # 2. CONTAINER STATUS CHECK  
+          echo "🐳 Container Status Check:"
+          echo "All running containers:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"
+          echo ""
+          
+          if ! docker ps | grep -q nine-tones-app; then
+            echo "❌ CRITICAL: nine-tones-app container is not running!"
+            
+            echo "🔍 Checking if container exists (stopped):"
+            docker ps -a | grep nine-tones-app || echo "No nine-tones-app container found at all"
+            
+            echo "🔍 Recent container logs (if any):"
+            docker logs nine-tones-app 2>/dev/null || echo "No logs available"
+            
+            echo "🔍 Docker Compose status:"
+            docker compose ps 2>/dev/null || echo "No compose services found"
+            
+            echo "🔍 Available Docker images:"
+            docker images | grep nine-tones || echo "No nine-tones images found"
+            
+            exit 1
+          fi
+          
+          echo "✅ Container is running, proceeding with detailed checks..."
+          
+          # 3. CONTAINER DETAILS
+          echo ""
+          echo "🔍 Container Detailed Information:"
+          docker inspect nine-tones-app --format='Container State: {{.State.Status}}'
+          docker inspect nine-tones-app --format='Started At: {{.State.StartedAt}}'
+          docker inspect nine-tones-app --format='Image: {{.Config.Image}}'
+          docker inspect nine-tones-app --format='Environment: {{.Config.Env}}'
+          echo ""
+          
+          # 4. HEALTH CHECK STATUS
+          echo "🏥 Health Check Analysis:"
+          for i in {1..8}; do
+            health_status=$(docker inspect nine-tones-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "no-healthcheck")
+            echo "[$i/8] Health status: $health_status"
+            
+            if [ "$health_status" = "healthy" ]; then
+              echo "✅ Container health check passed!"
+              break
+            elif [ "$health_status" = "unhealthy" ]; then
+              echo "❌ Container is unhealthy!"
+              echo "Health check logs:"
+              docker inspect nine-tones-app --format='{{range .State.Health.Log}}{{.Output}}{{end}}'
+              break
+            elif [ "$health_status" = "no-healthcheck" ]; then
+              echo "⚠️ No health check configured, skipping to HTTP tests"
+              break
+            fi
+            
+            # Show recent logs during health check
+            if [ $i -eq 4 ]; then
+              echo "📋 Container logs (last 20 lines):"
+              docker logs --tail 20 nine-tones-app
+              echo ""
+            fi
+            
+            sleep 8
+          done
+          
+          # 5. PROCESS CHECK INSIDE CONTAINER
+          echo ""
+          echo "⚙️ Process Check Inside Container:"
+          docker exec nine-tones-app ps aux 2>/dev/null || echo "Could not check processes"
+          echo ""
+          
+          echo "🌐 Network Check Inside Container:"
+          docker exec nine-tones-app netstat -tlnp 2>/dev/null || echo "Could not check network ports"
+          echo ""
+          
+          # 6. HTTP ENDPOINT TESTING
+          echo "🌐 HTTP Endpoint Testing:"
+          max_attempts=10
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "[$attempt/$max_attempts] Testing HTTP endpoints..."
+            
+            # Test frontend
+            if docker exec nine-tones-app curl -f --connect-timeout 5 --max-time 15 http://localhost:3000/ >/dev/null 2>&1; then
+              echo "✅ Frontend (port 3000) is responding!"
+              frontend_ok=true
+            else
+              echo "❌ Frontend (port 3000) not responding"
+              frontend_ok=false
+            fi
+            
+            # Test backend health endpoint
+            if docker exec nine-tones-app curl -f --connect-timeout 5 --max-time 15 http://localhost:3001/health >/dev/null 2>&1; then
+              echo "✅ Backend health endpoint (port 3001) is responding!"
+              backend_ok=true
+            else
+              echo "❌ Backend health endpoint (port 3001) not responding"
+              backend_ok=false
+            fi
+            
+            # If both are working, we're good
+            if [ "$frontend_ok" = true ] && [ "$backend_ok" = true ]; then
+              echo "🎉 All HTTP endpoints are healthy!"
+              break
+            fi
+            
+            # Show what's happening in the container
+            if [ $attempt -eq 5 ]; then
+              echo ""
+              echo "📋 Mid-check container logs (last 30 lines):"
+              docker logs --tail 30 nine-tones-app
+              echo ""
+              
+              echo "🔍 Checking if files exist in container:"
+              docker exec nine-tones-app ls -la /app/ 2>/dev/null || echo "Could not list /app/"
+              docker exec nine-tones-app ls -la /app/frontend/build/ 2>/dev/null || echo "Could not list /app/frontend/build/"
+              docker exec nine-tones-app ls -la /app/backend/dist/ 2>/dev/null || echo "Could not list /app/backend/dist/"
+              echo ""
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo ""
+              echo "❌ HTTP HEALTH CHECK FAILED AFTER $max_attempts ATTEMPTS"
+              echo "=================================================="
+              echo ""
+              echo "🔍 FINAL DEBUG INFO:"
+              echo "Container logs (last 50 lines):"
+              docker logs --tail 50 nine-tones-app
+              echo ""
+              echo "Container environment:"
+              docker exec nine-tones-app env 2>/dev/null || echo "Could not get environment"
+              echo ""
+              echo "Container startup script:"
+              docker exec nine-tones-app cat /app/start.sh 2>/dev/null || echo "Could not read startup script"
+              echo ""
+              exit 1
+            fi
+            
+            sleep 8
+            attempt=$((attempt + 1))
+          done
+
+    - name: 📊 Deployment Summary via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        script: |
+          echo "📊 Deployment Summary:"
+          echo "====================="
+          echo "🐳 Container: nine-tones-app"
+          echo "📦 Image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
+          echo "🌐 Production URL: http://${{ env.VM_HOST }} (requires Caddy deployment)"
+          echo "🔄 Deploy Caddy next for web access - no direct port access available"
+          echo "🔧 Commit: ${{ github.sha }}"
+          echo "👤 Deployed by: ${{ github.actor }}"
+          echo "📅 Time: $(date)"
+          echo "📁 Deploy Path: /opt/apps/nine-tones"
+          echo ""
+          echo "🔍 Container Status:"
+          docker ps --filter name=nine-tones-app --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+          echo ""
+          echo "🏥 Health Status:"
+          docker inspect nine-tones-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+          echo ""
+          echo "💾 Resource Usage:"
+          docker stats --no-stream --format "table {{.Container}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}" nine-tones-app
+          echo ""
+          echo "🌐 Network:"
+          docker network ls --filter name=web
+          echo ""
+          echo "📋 Environment:"
+          echo "  - NODE_ENV: production"
+          echo "  - Frontend: port 3000"
+          echo "  - Backend API: port 3001"
+          echo "  - Memory Limit: 1GB"
+          echo "  - CPU Limit: 0.5 cores"
+          
+          # Cleanup old images (keep last 3)
+          echo ""
+          echo "🧹 Cleaning up old images..."
+          docker image prune -f --filter "dangling=true"

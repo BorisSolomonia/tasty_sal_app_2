@@ -1,0 +1,259 @@
+name: 🚀 Unified Full Stack Deploy
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  # Container Configuration
+  CONTAINER_NAME: nine-tones-app
+  
+  # GCP Configuration
+  REGION: europe-west3
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REPO: apps
+  APP: nine-tones-app
+  
+  # VM Configuration
+  VM_HOST: 34.141.45.73
+  DEPLOY_PATH: /opt/apps/nine-tones
+
+jobs:
+  build-and-deploy:
+    name: 🏗️ Build & Deploy Full Stack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: ☁️ Set up Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: 🐳 Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+    - name: 🔧 Create Production Environment Files
+      run: |
+        echo "🔐 Creating production environment files..."
+        
+        # Frontend environment (build-time)
+        cat > .env.production.local << EOF
+        # Firebase Configuration (Build-time)
+        REACT_APP_FIREBASE_API_KEY=${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+        REACT_APP_FIREBASE_AUTH_DOMAIN=${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+        REACT_APP_FIREBASE_PROJECT_ID=${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}
+        REACT_APP_FIREBASE_STORAGE_BUCKET=${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+        REACT_APP_FIREBASE_APP_ID=${{ secrets.REACT_APP_FIREBASE_APP_ID }}
+        
+        # API Configuration (through Caddy reverse proxy)
+        REACT_APP_API_URL=http://${{ env.VM_HOST }}
+        
+        # Build Configuration
+        CI=false
+        NODE_ENV=production
+        EOF
+
+        # Backend environment (build-time)
+        cat > backend/.env.production.local << EOF
+        NODE_ENV=production
+        PORT=3001
+        FRONTEND_URL=http://${{ env.VM_HOST }}
+        EOF
+
+    - name: 🏗️ Build & Push Docker Image
+      env:
+        IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP }}
+      run: |
+        echo "🏗️ Building Docker image..."
+        docker build \
+          --build-arg NODE_ENV=production \
+          --build-arg REACT_APP_FIREBASE_API_KEY="${{ secrets.REACT_APP_FIREBASE_API_KEY }}" \
+          --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}" \
+          --build-arg REACT_APP_FIREBASE_PROJECT_ID="${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}" \
+          --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}" \
+          --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}" \
+          --build-arg REACT_APP_FIREBASE_APP_ID="${{ secrets.REACT_APP_FIREBASE_APP_ID }}" \
+          --build-arg REACT_APP_API_URL="http://${{ env.VM_HOST }}" \
+          --tag "${IMAGE}:${{ github.sha }}" \
+          --tag "${IMAGE}:latest" \
+          .
+        
+        echo "📤 Pushing to Artifact Registry..."
+        docker push "${IMAGE}:${{ github.sha }}"
+        docker push "${IMAGE}:latest"
+
+    - name: 📤 Upload Deployment Files
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        source: "compose.yml,Caddyfile"
+        target: ${{ env.DEPLOY_PATH }}
+        overwrite: true
+
+    - name: 🚀 Deploy Full Stack
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        script: |
+          echo "🚀 Starting unified full stack deployment..."
+          
+          # Setup deployment directory
+          sudo mkdir -p ${{ env.DEPLOY_PATH }}
+          sudo chown -R $USER:$USER ${{ env.DEPLOY_PATH }}
+          cd ${{ env.DEPLOY_PATH }}
+          
+          # Authenticate with GCP
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          
+          # Create runtime environment file from GCP Secret Manager
+          echo "🔐 Fetching runtime environment from Secret Manager..."
+          TMPENV="$(mktemp)"
+          gcloud secrets versions access latest --secret=myapp-env --project=${{ secrets.GCP_PROJECT_ID }} > "$TMPENV"
+          
+          # Add deployment-specific variables
+          echo "" >> "$TMPENV"
+          echo "NODE_ENV=production" >> "$TMPENV"
+          echo "PORT=3001" >> "$TMPENV"
+          echo "FRONTEND_URL=http://${{ env.VM_HOST }}" >> "$TMPENV"
+          
+          # Move to deployment location
+          mv "$TMPENV" .env
+          
+          echo "✅ Environment file created from Secret Manager"
+          
+          # Create necessary Docker resources
+          echo "🌐 Setting up Docker resources..."
+          docker network create web 2>/dev/null || echo "Network 'web' already exists"
+          docker volume create caddy_data 2>/dev/null || echo "Volume 'caddy_data' already exists"
+          
+          # Pull latest image
+          IMAGE_NAME="europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
+          echo "📥 Pulling latest image: $IMAGE_NAME"
+          
+          if docker pull "$IMAGE_NAME"; then
+            echo "✅ Image pulled successfully"
+            # Tag as latest for compose
+            docker tag "$IMAGE_NAME" \
+                       europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:latest
+          else
+            echo "❌ Failed to pull image"
+            exit 1
+          fi
+          
+          # Deploy full stack using compose.yml
+          echo "🛑 Stopping existing services..."
+          docker compose -f compose.yml down --remove-orphans 2>/dev/null || echo "No existing services"
+          
+          echo "🌟 Starting full stack (App + Caddy)..."
+          echo "📋 Using compose.yml configuration:"
+          cat compose.yml
+          echo ""
+          
+          if docker compose -f compose.yml up -d --wait; then
+            echo "✅ Full stack deployment successful"
+          else
+            echo "❌ Deployment failed"
+            docker compose -f compose.yml ps
+            docker compose -f compose.yml logs
+            exit 1
+          fi
+
+    - name: 🔍 Comprehensive Health Check
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        script: |
+          echo "🔍 COMPREHENSIVE HEALTH CHECK"
+          echo "============================="
+          
+          cd ${{ env.DEPLOY_PATH }}
+          
+          # Container status
+          echo "🐳 Container Status:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo ""
+          
+          # Wait for services to be ready
+          sleep 10
+          
+          # Test API routing through Caddy
+          echo "🌐 API Routing Test:"
+          max_attempts=5
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "[$attempt/$max_attempts] Testing API endpoint..."
+            
+            if curl -f --connect-timeout 10 --max-time 30 http://localhost/api/health >/dev/null 2>&1; then
+              echo "✅ API routing through Caddy working!"
+              
+              # Show actual response
+              echo "API Response:"
+              curl -s http://localhost/api/health | head -3
+              break
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "❌ API routing failed after $max_attempts attempts"
+              echo "Container logs:"
+              docker logs nine-tones-app --tail 20
+              docker logs caddy --tail 10
+              exit 1
+            fi
+            
+            sleep 5
+            attempt=$((attempt + 1))
+          done
+          
+          # Test frontend
+          echo ""
+          echo "🖥️ Frontend Test:"
+          if curl -f --connect-timeout 10 http://localhost/ >/dev/null 2>&1; then
+            echo "✅ Frontend accessible through Caddy"
+          else
+            echo "❌ Frontend not accessible"
+            exit 1
+          fi
+
+    - name: 📊 Deployment Summary
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VM_HOST }}
+        username: ${{ secrets.VM_SSH_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        script: |
+          echo "📊 DEPLOYMENT SUMMARY"
+          echo "===================="
+          echo "🌐 Production URL: http://${{ env.VM_HOST }}"
+          echo "🌐 API Endpoint: http://${{ env.VM_HOST }}/api/*"
+          echo "📦 Image: europe-west3-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/apps/nine-tones-app:${{ github.sha }}"
+          echo "🔧 Commit: ${{ github.sha }}"
+          echo "👤 Deployed by: ${{ github.actor }}"
+          echo "📅 Time: $(date)"
+          echo ""
+          echo "🔍 Final Status:"
+          docker ps --filter name=nine-tones-app --filter name=caddy --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo ""
+          echo "💾 Resource Usage:"
+          docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" nine-tones-app caddy
+          echo ""
+          echo "✅ Full stack deployment completed successfully!"

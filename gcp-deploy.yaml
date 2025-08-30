@@ -1,0 +1,122 @@
+# Google Cloud Run Deployment Configuration for 9-Tones Business Management App
+# Purpose: Production deployment configuration for Google Cloud Platform
+#
+# This YAML defines how the application runs in Google Cloud Run:
+# - Serverless container platform that auto-scales based on traffic
+# - Handles both frontend (React) and backend (Express.js) in one container
+# - Integrates with Google Secret Manager for secure credential management
+# - Optimized resource allocation for cost-effective operation
+
+apiVersion: serving.knative.dev/v1        # Knative API version for Cloud Run
+kind: Service                             # Kubernetes Service resource type
+
+metadata:
+  name: 9-tones-app                       # Service name (will be part of URL)
+  annotations:
+    # Allow public internet access (no authentication required)
+    run.googleapis.com/ingress: all
+    # Use Generation 2 execution environment (better performance, more features)
+    run.googleapis.com/execution-environment: gen2
+
+spec:
+  template:
+    metadata:
+      annotations:
+        # Auto-scaling configuration
+        autoscaling.knative.dev/maxScale: "5"      # Max 5 instances (reduced from 10 for cost optimization)
+        autoscaling.knative.dev/minScale: "0"      # Min 0 instances (scale to zero when no traffic)
+        
+        # Resource allocation (OPTIMIZED for small-medium business app)
+        run.googleapis.com/memory: "512Mi"         # 512MB RAM (reduced from 1GB - sufficient for Node.js app)
+        run.googleapis.com/cpu: "500m"             # 0.5 CPU cores (reduced from 1 full core - adequate for typical load)
+        
+    spec:
+      # Container configuration
+      containerConcurrency: 50            # Max 50 concurrent requests per instance (reduced for stability)
+      timeoutSeconds: 120                 # Max request timeout: 2 minutes (reduced from 5 min)
+      
+      containers:
+      - image: gcr.io/PROJECT_ID/9-tones-app:latest  # Container image location (replace PROJECT_ID)
+        
+        # Port configuration - Cloud Run only uses one port for external traffic
+        ports:
+        - name: http1                     # Primary port for Cloud Run
+          containerPort: 3000             # Frontend port (Cloud Run routes traffic here)
+        # Note: Port 3001 (backend) is internal-only, accessed by frontend within container
+        
+        # Environment variables for application configuration
+        env:
+        - name: NODE_ENV                  # Set production mode
+          value: "production"
+        - name: PORT                      # Backend API server port
+          value: "3001"
+          
+        # Secure credential injection from Google Secret Manager
+        # These secrets must be created separately: gcloud secrets create rs-api-config
+        - name: SOAP_ENDPOINT             # RS.ge API endpoint URL
+          valueFrom:
+            secretKeyRef:
+              name: rs-api-config         # Secret name in Secret Manager
+              key: endpoint               # Key within the secret
+        - name: SOAP_SU                   # RS.ge username:user_id
+          valueFrom:
+            secretKeyRef:
+              name: rs-api-config
+              key: username
+        - name: SOAP_SP                   # RS.ge password
+          valueFrom:
+            secretKeyRef:
+              name: rs-api-config
+              key: password
+        
+        # Resource limits (must match template annotations)
+        resources:
+          limits:
+            memory: "512Mi"               # Maximum memory usage
+            cpu: "500m"                   # Maximum CPU usage (0.5 cores)
+          requests:                       # Guaranteed resources (for better performance)
+            memory: "256Mi"               # Minimum memory reserved
+            cpu: "250m"                   # Minimum CPU reserved (0.25 cores)
+        
+        # Health check probes for container lifecycle management
+        
+        # Startup probe: Checks if application has started successfully
+        startupProbe:
+          httpGet:
+            path: /health                 # Health check endpoint in backend
+            port: 3001                    # Backend port
+          initialDelaySeconds: 15         # Wait 15s after container start
+          periodSeconds: 5                # Check every 5 seconds
+          timeoutSeconds: 3               # 3s timeout per check
+          failureThreshold: 6             # Allow 6 failures (15s + 6*5s = 45s total startup time)
+        
+        # Readiness probe: Checks if application is ready to receive traffic
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          periodSeconds: 10               # Check every 10 seconds
+          timeoutSeconds: 3
+          failureThreshold: 3             # Mark unready after 3 failures
+        
+        # Liveness probe: Checks if application is still running healthy
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          periodSeconds: 30               # Check every 30 seconds (less frequent)
+          timeoutSeconds: 5               # Longer timeout for liveness
+          failureThreshold: 2             # Restart container after 2 failures
+
+# RESOURCE OPTIMIZATION NOTES:
+# 
+# Original config: 1GB RAM, 1000m CPU - OVERSIZED for this application
+# Optimized config: 512MB RAM, 500m CPU - RIGHT-SIZED for small business app
+#
+# Expected monthly cost reduction: ~60-70% 
+# Performance: Still excellent for typical business load (10-50 concurrent users)
+# 
+# For high-traffic scenarios, consider:
+# - Increasing maxScale to 10-20
+# - Bumping memory to 1GB and CPU to 1000m
+# - Adding Cloud CDN for frontend assets

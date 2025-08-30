@@ -1,0 +1,75 @@
+# 🚀 PRODUCTION DEPLOYMENT - Unified Full Stack
+# This is the ONLY file used for production deployment via GitHub Actions
+# Contains both Nine Tones App + Caddy reverse proxy configuration
+
+version: "3.9"
+
+services:
+  nine-tones-app:
+    image: europe-west3-docker.pkg.dev/nine-tones-bots-2025-468320/apps/nine-tones-app:latest
+    container_name: nine-tones-app
+    restart: unless-stopped
+    
+    env_file:
+      - .env  # Fetched from GCP Secret Manager 'myapp-env' during deployment
+    
+    expose:
+      - "3000"  # Frontend port
+      - "3001"  # Backend API port
+    
+    networks: [web]
+    
+    # Resource limits
+    mem_limit: 1g
+    cpus: "0.5"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    
+    ports:
+      - "80:80"
+      - "443:443"
+    
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    
+    networks: [web]
+    
+    # Resource limits  
+    mem_limit: 128m
+    cpus: "0.25"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    depends_on:
+      nine-tones-app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+    external: true
+  caddy_config:
+  caddy_logs:
+
+networks:
+  web:
+    external: true
