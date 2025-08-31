@@ -365,13 +365,32 @@ jobs:
           echo "✅ Docker network 'web' is ready"
           
           echo "📝 Updating compose file with commit SHA..."
+          
+          # Verify we have the compose file
+          echo "🔍 Checking for compose file..."
+          if [ -f secure-docker-setup/docker-compose.secure.yml ]; then
+            echo "✅ Found docker-compose.secure.yml"
+          else
+            echo "❌ docker-compose.secure.yml not found"
+            echo "📁 Available files in secure-docker-setup:"
+            ls -la secure-docker-setup/ || echo "secure-docker-setup directory not found"
+            echo "📁 Available files in current directory:"
+            ls -la
+            exit 1
+          fi
+          
           cd secure-docker-setup
           
           # Update image path in compose file
           sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" docker-compose.secure.yml
           
           echo "📊 Current compose configuration:"
-          docker compose config
+          docker compose config || {
+            echo "❌ docker compose config failed"
+            echo "🔍 Compose file contents:"
+            cat docker-compose.secure.yml
+            exit 1
+          }
           
           echo "📦 Pulling latest image..."
           docker compose pull
