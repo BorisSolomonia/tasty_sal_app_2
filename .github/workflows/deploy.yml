@@ -302,7 +302,7 @@ jobs:
           
           echo "📄 Key files:"
           test -f /opt/$APP_NAME/.env.production && echo "✅ .env.production exists" || echo "❌ .env.production missing"
-          test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.secure.yml && echo "✅ docker-compose.secure.yml exists" || echo "❌ docker-compose.secure.yml missing"
+          test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "❌ docker-compose.yml missing"
           test -f /opt/$APP_NAME/infra/caddy/conf.d/$APP_NAME.caddy && echo "✅ Caddy config exists" || echo "❌ Caddy config missing"
           
           echo "✅ File verification completed"
@@ -368,10 +368,10 @@ jobs:
           
           # Verify we have the compose file
           echo "🔍 Checking for compose file..."
-          if [ -f secure-docker-setup/docker-compose.secure.yml ]; then
-            echo "✅ Found docker-compose.secure.yml"
+          if [ -f secure-docker-setup/docker-compose.yml ]; then
+            echo "✅ Found docker-compose.yml"
           else
-            echo "❌ docker-compose.secure.yml not found"
+            echo "❌ docker-compose.yml not found"
             echo "📁 Available files in secure-docker-setup:"
             ls -la secure-docker-setup/ || echo "secure-docker-setup directory not found"
             echo "📁 Available files in current directory:"
@@ -379,21 +379,19 @@ jobs:
             exit 1
           fi
           
-          cd secure-docker-setup
-          
-          # Update image path in compose file
-          sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" docker-compose.secure.yml
+          # Update image path in compose file (stay in parent directory)
+          sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" secure-docker-setup/docker-compose.yml
           
           echo "📊 Compose file updated successfully:"
           echo "🔍 Image reference in compose file:"
-          grep "image:" docker-compose.secure.yml
+          grep "image:" secure-docker-setup/docker-compose.yml
           
           echo "📦 Pulling latest image..."
-          docker compose pull
+          docker compose -f secure-docker-setup/docker-compose.yml pull
           
           echo "🔄 Deploying application..."
-          docker compose down --remove-orphans || true
-          docker compose up -d
+          docker compose -f secure-docker-setup/docker-compose.yml down --remove-orphans || true
+          docker compose -f secure-docker-setup/docker-compose.yml up -d
           
           echo "⏳ Waiting for services to be healthy..."
           sleep 15
@@ -481,14 +479,14 @@ jobs:
           echo "❌ Deployment failed, initiating rollback..."
           echo "📍 Rolling back to: $IMAGE_PATH:latest"
           
-          cd /opt/$APP_NAME/secure-docker-setup
+          cd /opt/$APP_NAME
           
           # Rollback to latest tag
-          sed -i "s|:${{ github.sha }}|:latest|g" docker-compose.secure.yml
+          sed -i "s|:${{ github.sha }}|:latest|g" secure-docker-setup/docker-compose.yml
           
           echo "🔄 Rolling back to previous version..."
-          docker compose down
-          docker compose up -d
+          docker compose -f secure-docker-setup/docker-compose.yml down
+          docker compose -f secure-docker-setup/docker-compose.yml up -d
           
           echo "🔧 Reloading Caddy..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
