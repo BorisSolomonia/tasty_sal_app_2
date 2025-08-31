@@ -155,12 +155,33 @@ jobs:
           REACT_APP_API_URL="http://35.209.56.146"
         fi
         
-        # Update Dockerfile ports to 3004/3005
-        sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
-        sed -i 's/:3000/:3004/g' Dockerfile
-        sed -i 's/:3001/:3005/g' Dockerfile
+        # Update Dockerfile ports to 3004/3005 (if not already done)
+        echo "🔧 Updating Dockerfile ports..."
+        if grep -q "EXPOSE 3000 3001" Dockerfile; then
+          echo "Updating EXPOSE ports..."
+          sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
+        fi
+        if grep -q ":3000" Dockerfile; then
+          echo "Updating port 3000 references..."
+          sed -i 's/:3000/:3004/g' Dockerfile
+        fi
+        if grep -q ":3001" Dockerfile; then
+          echo "Updating port 3001 references..."
+          sed -i 's/:3001/:3005/g' Dockerfile
+        fi
+        echo "✅ Dockerfile updated"
         
-        docker build \
+        echo "🔍 Dockerfile port configuration:"
+        grep -E "(EXPOSE|:300[0-9])" Dockerfile || echo "No port references found"
+        
+        echo "🔧 Starting Docker build..."
+        echo "📋 Build arguments:"
+        echo "  REACT_APP_FIREBASE_API_KEY: [${#REACT_APP_FIREBASE_API_KEY} chars]"
+        echo "  REACT_APP_API_URL: $REACT_APP_API_URL"
+        echo "  IMAGE_PATH: $IMAGE_PATH"
+        
+        if docker build \
+          --progress=plain \
           --build-arg REACT_APP_FIREBASE_API_KEY="$REACT_APP_FIREBASE_API_KEY" \
           --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="$REACT_APP_FIREBASE_AUTH_DOMAIN" \
           --build-arg REACT_APP_FIREBASE_PROJECT_ID="$REACT_APP_FIREBASE_PROJECT_ID" \
@@ -170,7 +191,16 @@ jobs:
           --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
           -t $IMAGE_PATH:${{ github.sha }} \
           -t $IMAGE_PATH:latest \
-          .
+          .; then
+          echo "✅ Docker build successful"
+        else
+          echo "❌ Docker build failed"
+          echo "🔍 Docker system info:"
+          docker system info
+          echo "🔍 Docker version:"
+          docker version
+          exit 1
+        fi
         
         echo "📤 Pushing images..."
         docker push $IMAGE_PATH:${{ github.sha }}
