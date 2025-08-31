@@ -279,7 +279,7 @@ jobs:
         rm: false
         strip_components: 0
         overwrite: true
-        source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy,.env.production"
+        source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy"
         target: /opt/${{ env.APP_NAME }}/
 
     - name: 🔍 Verify File Upload
@@ -301,11 +301,39 @@ jobs:
           ls -la /opt/$APP_NAME/infra/caddy/conf.d/ || echo "❌ caddy conf.d missing"
           
           echo "📄 Key files:"
-          test -f /opt/$APP_NAME/.env.production && echo "✅ .env.production exists" || echo "❌ .env.production missing"
           test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "❌ docker-compose.yml missing"
           test -f /opt/$APP_NAME/infra/caddy/conf.d/$APP_NAME.caddy && echo "✅ Caddy config exists" || echo "❌ Caddy config missing"
           
           echo "✅ File verification completed"
+
+    - name: 📦 Create .env file on VM from Secret Manager
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 60s
+        command_timeout: 120s
+        script: |
+          set -e
+          APP_NAME="${{ env.APP_NAME }}"
+          PROJECT_ID="${{ env.PROJECT_ID }}"
+          
+          echo "📦 Creating .env file from Secret Manager..."
+          echo "Secret name: $APP_NAME-env"
+          echo "Project: $PROJECT_ID"
+          echo "Target: /opt/$APP_NAME/.env"
+          
+          # Fetch environment variables from Secret Manager and save to .env
+          gcloud secrets versions access latest \
+            --secret="$APP_NAME-env" \
+            --project="$PROJECT_ID" > /opt/$APP_NAME/.env
+          
+          echo "✅ .env file created successfully"
+          echo "📊 Environment variables count: $(wc -l < /opt/$APP_NAME/.env)"
+          echo "🔍 First few lines (sanitized):"
+          head -5 /opt/$APP_NAME/.env | sed 's/=.*/=***/' || true
     
     - name: 🚀 Deploy Application
       uses: appleboy/ssh-action@v1.0.3
@@ -345,8 +373,11 @@ jobs:
           
           cd /opt/$APP_NAME
           
-          # Ensure .env is in place
-          mv .env.production .env || true
+          # Verify .env file exists
+          if [ ! -f .env ]; then
+            echo "❌ .env file not found!"
+            exit 1
+          fi
           echo "📊 Environment variables loaded: $(wc -l < .env)"
           
           echo "🔐 Authenticating to Artifact Registry..."
