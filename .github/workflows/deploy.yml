@@ -418,11 +418,11 @@ jobs:
           grep "image:" secure-docker-setup/docker-compose.yml
           
           echo "📦 Pulling latest image..."
-          docker compose -f secure-docker-setup/docker-compose.yml pull
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env pull
           
           echo "🔄 Deploying application..."
-          docker compose -f secure-docker-setup/docker-compose.yml down --remove-orphans || true
-          docker compose -f secure-docker-setup/docker-compose.yml up -d
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env down --remove-orphans || true
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env up -d
           
           echo "⏳ Waiting for services to be healthy..."
           sleep 15
@@ -516,8 +516,8 @@ jobs:
           sed -i "s|:${{ github.sha }}|:latest|g" secure-docker-setup/docker-compose.yml
           
           echo "🔄 Rolling back to previous version..."
-          docker compose -f secure-docker-setup/docker-compose.yml down
-          docker compose -f secure-docker-setup/docker-compose.yml up -d
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env down
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env up -d
           
           echo "🔧 Reloading Caddy..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
