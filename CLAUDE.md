@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build and Development Commands
+## Build and Development Commands.
 
 ### Frontend (React)
 - `npm start` - Start development server (runs on http://localhost:3000)
