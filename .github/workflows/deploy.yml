@@ -10,10 +10,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: ${{ vars.APP_NAME }}
-  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  REGION: ${{ vars.AR_REGION }}
-  REPOSITORY: ${{ vars.AR_REPO_NAME }}
+  APP_NAME: ${{ vars.APP_NAME || 'Tasty_Erp' }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'nine-tones-bots-2025-468320' }}
+  REGION: ${{ vars.AR_REGION || 'us-central1' }}
+  REPOSITORY: ${{ vars.AR_REPO_NAME || 'tasty-ar' }}
 
 jobs:
   deploy:
@@ -27,10 +27,26 @@ jobs:
     - name: 🔍 Debug Environment Variables
       run: |
         echo "🔍 Environment Variables Debug:"
-        echo "APP_NAME: ${{ env.APP_NAME }}"
-        echo "PROJECT_ID: ${{ env.PROJECT_ID }}"
-        echo "REGION: ${{ env.REGION }}"
-        echo "REPOSITORY: ${{ env.REPOSITORY }}"
+        echo "APP_NAME: '${{ env.APP_NAME }}'"
+        echo "PROJECT_ID: '${{ env.PROJECT_ID }}'"
+        echo "REGION: '${{ env.REGION }}'"
+        echo "REPOSITORY: '${{ env.REPOSITORY }}'"
+        
+        echo "🔍 GitHub Variables (raw):"
+        echo "vars.APP_NAME: '${{ vars.APP_NAME }}'"
+        echo "vars.GCP_PROJECT_ID: '${{ vars.GCP_PROJECT_ID }}'"
+        echo "vars.AR_REGION: '${{ vars.AR_REGION }}'"
+        echo "vars.AR_REPO_NAME: '${{ vars.AR_REPO_NAME }}'"
+        echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        
+        # Check if variables are empty
+        if [ -z "${{ env.REGION }}" ]; then
+          echo "❌ REGION is empty!"
+        fi
+        if [ -z "${{ env.PROJECT_ID }}" ]; then
+          echo "❌ PROJECT_ID is empty!"
+        fi
     
     - name: 🔐 Auth to Google Cloud
       uses: google-github-actions/auth@v2
@@ -57,9 +73,15 @@ jobs:
         REPO_NAME=$(echo "${{ env.REPOSITORY }}" | sed 's|.*/||')
         echo "Repository name: $REPO_NAME"
         
+        # Use fallback for region
+        REPO_REGION="${{ env.REGION }}"
+        if [ -z "$REPO_REGION" ]; then
+          REPO_REGION="us-central1"
+        fi
+        
         gcloud artifacts repositories create $REPO_NAME \
           --repository-format=docker \
-          --location=${{ env.REGION }} \
+          --location=$REPO_REGION \
           --project=${{ env.PROJECT_ID }} \
           --description="Container images for ${{ env.APP_NAME }}" || {
           echo "ℹ️ Repository might already exist, continuing..."
@@ -71,8 +93,20 @@ jobs:
     - name: 🐳 Configure Docker
       run: |
         echo "🐳 Configuring Docker for Artifact Registry..."
-        gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-        echo "✅ Docker configured"
+        
+        # Use fallback if REGION is empty
+        DOCKER_REGION="${{ env.REGION }}"
+        if [ -z "$DOCKER_REGION" ]; then
+          echo "⚠️ REGION is empty, using us-central1 as fallback"
+          DOCKER_REGION="us-central1"
+        fi
+        
+        echo "Docker registry: $DOCKER_REGION-docker.pkg.dev"
+        gcloud auth configure-docker $DOCKER_REGION-docker.pkg.dev --quiet
+        echo "✅ Docker configured for $DOCKER_REGION"
+        
+        # Store the region for later steps
+        echo "DOCKER_REGION=$DOCKER_REGION" >> $GITHUB_ENV
     
     - name: 📦 Fetch Environment Variables
       run: |
@@ -89,8 +123,8 @@ jobs:
     
     - name: 🏗️ Build & Push Docker Image
       run: |
-        # Construct correct image path
-        IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}"
+        # Construct correct image path using DOCKER_REGION
+        IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}"
         
         echo "🏗️ Building Docker image..."
         echo "📍 Image path: $IMAGE_PATH"
@@ -159,7 +193,12 @@ jobs:
           echo "📊 Environment variables loaded: $(wc -l < .env)"
           
           echo "🔐 Authenticating to Artifact Registry..."
-          gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+          # Use the same region fallback
+          DEPLOY_REGION="$REGION"
+          if [ -z "$DEPLOY_REGION" ]; then
+            DEPLOY_REGION="us-central1"
+          fi
+          gcloud auth configure-docker $DEPLOY_REGION-docker.pkg.dev --quiet
           
           echo "🌐 Ensuring Docker network exists..."
           docker network inspect web >/dev/null 2>&1 || {
