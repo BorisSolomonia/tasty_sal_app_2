@@ -1,0 +1,13 @@
+# Tasty ERP Application Routes
+handle_path /* {
+    reverse_proxy Tasty_Erp:3004
+}
+
+handle_path /api/* {
+    reverse_proxy Tasty_Erp:3005
+}
+
+# Health check endpoint
+handle /health/Tasty_Erp {
+    reverse_proxy Tasty_Erp:3005
+}

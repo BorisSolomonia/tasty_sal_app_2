@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  Tasty_Erp:
+    image: us-central1-docker.pkg.dev/nine-tones-bots-2025-468320/tasty-ar/Tasty_Erp:latest
+    container_name: Tasty_Erp
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - web
+    expose:
+      - "3004"  # Frontend port
+      - "3005"  # Backend API port
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:3004 && curl -f http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+networks:
+  web:
+    external: true
