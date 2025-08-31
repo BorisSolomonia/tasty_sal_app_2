@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the **UNIFIED PRODUCTION DEPLOYMENT** system for the Nine Tones application. All previous split deployment methods have been consolidated into a single, consistent workflow.
+This document describes the **UNIFIED PRODUCTION DEPLOYMENT** system for the Nine Tones application. All previous split deployment methods have been consolidated into a singlee, consistent workflow.
 
 ## Architecture Flow
 
