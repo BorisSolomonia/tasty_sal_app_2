@@ -209,15 +209,53 @@ jobs:
         echo "✅ Images pushed successfully"
         echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
     
+    - name: 🔍 Debug SSH Connection
+      run: |
+        echo "🔍 SSH Connection Debug:"
+        echo "VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        echo "SSH Key length: ${#SSH_KEY}"
+        echo "SSH Key type: $(echo '${{ secrets.VM_SSH_KEY }}' | head -1)"
+        
+        # Create temporary SSH key file
+        echo "🔑 Creating temporary SSH key file..."
+        echo '${{ secrets.VM_SSH_KEY }}' > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
+        # Validate SSH key format
+        echo "🔍 Validating SSH key..."
+        ssh-keygen -y -f /tmp/ssh_key > /tmp/public_key || echo "❌ Invalid SSH key format"
+        echo "Public key fingerprint: $(ssh-keygen -lf /tmp/ssh_key)" || echo "❌ Could not get fingerprint"
+        
+        # Test SSH connectivity
+        echo "🔗 Testing SSH connectivity..."
+        ssh -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -i /tmp/ssh_key \
+            ${{ vars.VM_SSH_USER }}@${{ vars.VM_HOST }} \
+            "echo 'SSH connection successful'" || echo "❌ SSH connection failed"
+        
+        # Cleanup
+        rm -f /tmp/ssh_key /tmp/public_key
+      env:
+        SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
     - name: 📤 Upload Files to VM
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ vars.VM_HOST }}
         username: ${{ vars.VM_SSH_USER }}
         key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        use_insecure_cipher: false
+        rm: false
+        strip_components: 0
+        overwrite: true
         source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy,.env.production"
         target: /opt/${{ env.APP_NAME }}/
-        overwrite: true
     
     - name: 🚀 Deploy Application
       uses: appleboy/ssh-action@v1.0.3
@@ -225,6 +263,9 @@ jobs:
         host: ${{ vars.VM_HOST }}
         username: ${{ vars.VM_SSH_USER }}
         key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 120s
+        command_timeout: 300s
         script: |
           set -e
           
@@ -302,6 +343,9 @@ jobs:
         host: ${{ vars.VM_HOST }}
         username: ${{ vars.VM_SSH_USER }}
         key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 60s
+        command_timeout: 120s
         script: |
           set -e
           
