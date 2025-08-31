@@ -244,8 +244,8 @@ jobs:
     - name: 📤 Upload Files to VM
       uses: appleboy/scp-action@v0.1.7
       with:
-        host: ${{ vars.VM_HOST }}
-        username: ${{ vars.VM_SSH_USER }}
+        host: "35.209.56.146"
+        username: "borissolomonia"
         key: ${{ secrets.VM_SSH_KEY }}
         port: 22
         timeout: 30s
@@ -260,8 +260,8 @@ jobs:
     - name: 🚀 Deploy Application
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ vars.VM_HOST }}
-        username: ${{ vars.VM_SSH_USER }}
+        host: "35.209.56.146"
+        username: "borissolomonia"
         key: ${{ secrets.VM_SSH_KEY }}
         port: 22
         timeout: 120s
@@ -354,8 +354,8 @@ jobs:
     - name: 🔍 Health Check & Tests
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ vars.VM_HOST }}
-        username: ${{ vars.VM_SSH_USER }}
+        host: "35.209.56.146"
+        username: "borissolomonia"
         key: ${{ secrets.VM_SSH_KEY }}
         port: 22
         timeout: 60s
@@ -390,12 +390,21 @@ jobs:
           
           echo "🎯 Deployment verification complete!"
 
+    - name: 🔍 Debug Rollback Variables
+      if: failure()
+      run: |
+        echo "🔍 Rollback Debug Variables:"
+        echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        echo "APP_NAME: '${{ env.APP_NAME }}'"
+        echo "IMAGE_PATH: '${{ env.IMAGE_PATH }}'"
+
     - name: ❌ Rollback on Failure
       if: failure()
       uses: appleboy/ssh-action@v1.0.3
       with:
-        host: ${{ vars.VM_HOST }}
-        username: ${{ vars.VM_SSH_USER }}
+        host: "35.209.56.146"
+        username: "borissolomonia"
         key: ${{ secrets.VM_SSH_KEY }}
         port: 22
         timeout: 60s
