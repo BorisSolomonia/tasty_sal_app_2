@@ -241,6 +241,31 @@ jobs:
       env:
         SSH_KEY: ${{ secrets.VM_SSH_KEY }}
 
+    - name: 🏗️ Setup VM Directories
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        script: |
+          APP_NAME="${{ env.APP_NAME }}"
+          echo "🏗️ Setting up directories for $APP_NAME..."
+          
+          # Create necessary directories
+          sudo mkdir -p /opt/$APP_NAME/secure-docker-setup
+          sudo mkdir -p /opt/$APP_NAME/infra/caddy/conf.d
+          
+          # Set proper ownership
+          sudo chown -R $USER:$USER /opt/$APP_NAME
+          
+          echo "📁 Directory structure created:"
+          ls -la /opt/$APP_NAME/ || echo "Directory doesn't exist yet"
+          
+          echo "✅ VM directories ready"
+
     - name: 📤 Upload Files to VM
       uses: appleboy/scp-action@v0.1.7
       with:
@@ -256,6 +281,31 @@ jobs:
         overwrite: true
         source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy,.env.production"
         target: /opt/${{ env.APP_NAME }}/
+
+    - name: 🔍 Verify File Upload
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        script: |
+          APP_NAME="${{ env.APP_NAME }}"
+          echo "🔍 Verifying file upload for $APP_NAME..."
+          
+          echo "📁 Directory contents:"
+          ls -la /opt/$APP_NAME/ || echo "❌ Main directory missing"
+          ls -la /opt/$APP_NAME/secure-docker-setup/ || echo "❌ secure-docker-setup missing"
+          ls -la /opt/$APP_NAME/infra/caddy/conf.d/ || echo "❌ caddy conf.d missing"
+          
+          echo "📄 Key files:"
+          test -f /opt/$APP_NAME/.env.production && echo "✅ .env.production exists" || echo "❌ .env.production missing"
+          test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.secure.yml && echo "✅ docker-compose.secure.yml exists" || echo "❌ docker-compose.secure.yml missing"
+          test -f /opt/$APP_NAME/infra/caddy/conf.d/$APP_NAME.caddy && echo "✅ Caddy config exists" || echo "❌ Caddy config missing"
+          
+          echo "✅ File verification completed"
     
     - name: 🚀 Deploy Application
       uses: appleboy/ssh-action@v1.0.3
