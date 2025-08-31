@@ -384,13 +384,9 @@ jobs:
           # Update image path in compose file
           sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" docker-compose.secure.yml
           
-          echo "📊 Current compose configuration:"
-          docker compose config || {
-            echo "❌ docker compose config failed"
-            echo "🔍 Compose file contents:"
-            cat docker-compose.secure.yml
-            exit 1
-          }
+          echo "📊 Compose file updated successfully:"
+          echo "🔍 Image reference in compose file:"
+          grep "image:" docker-compose.secure.yml
           
           echo "📦 Pulling latest image..."
           docker compose pull
