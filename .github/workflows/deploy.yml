@@ -124,7 +124,7 @@ jobs:
           username: ${{ vars.VM_SSH_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           overwrite: true
-          source: "secure-docker-setup/docker-compose.secure.yml,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy"
+          source: "secure-docker-setup/docker-compose.yml,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy"
           target: "/opt/${{ env.APP_NAME }}/"
 
       # ⬇️ Upload the already-fetched .env to the **parent** folder on VM
@@ -152,14 +152,14 @@ jobs:
             cd "$APP"
 
             echo "🔧 Inject new image tag into compose"
-            sed -i "s|^\s*image: .*|    image: ${IMAGE_PATH}:${{ github.sha }}|" secure-docker-setup/docker-compose.secure.yml
+            sed -i "s|^\s*image: .*|    image: ${IMAGE_PATH}:${{ github.sha }}|" secure-docker-setup/docker-compose.yml
 
             echo "🐳 docker compose pull (using top-level .env)"
-            docker compose -f secure-docker-setup/docker-compose.secure.yml pull
+            docker compose -f secure-docker-setup/docker-compose.yml pull
 
             echo "🔄 Up -d"
-            docker compose -f secure-docker-setup/docker-compose.secure.yml down --remove-orphans || true
-            docker compose -f secure-docker-setup/docker-compose.secure.yml up -d
+            docker compose -f secure-docker-setup/docker-compose.yml down --remove-orphans || true
+            docker compose -f secure-docker-setup/docker-compose.yml up -d
 
             echo "🌐 Network 'web'"
             docker network inspect web >/dev/null 2>&1 || docker network create web
