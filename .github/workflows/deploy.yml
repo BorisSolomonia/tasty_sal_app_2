@@ -278,6 +278,20 @@ jobs:
           echo "🚀 Deploying $APP_NAME..."
           echo "📍 Image: $IMAGE_PATH:$COMMIT_SHA"
           echo "📍 VM Host: ${{ vars.VM_HOST }}"
+          echo "📍 Current user: $(whoami)"
+          echo "📍 Current directory: $(pwd)"
+          
+          # Error handling function
+          handle_error() {
+            local exit_code=$?
+            local line_number=$1
+            echo "❌ Error on line $line_number: Command exited with code $exit_code"
+            echo "📋 Recent commands:"
+            history | tail -5
+            exit $exit_code
+          }
+          
+          trap 'handle_error $LINENO' ERR
           
           cd /opt/$APP_NAME
           
@@ -383,6 +397,9 @@ jobs:
         host: ${{ vars.VM_HOST }}
         username: ${{ vars.VM_SSH_USER }}
         key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 60s
+        command_timeout: 120s
         script: |
           APP_NAME="${{ env.APP_NAME }}"
           IMAGE_PATH="${{ env.IMAGE_PATH }}"
