@@ -123,8 +123,9 @@ jobs:
     
     - name: 🏗️ Build & Push Docker Image
       run: |
-        # Construct correct image path using DOCKER_REGION
-        IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.APP_NAME }}"
+        # Construct correct image path using DOCKER_REGION (lowercase)
+        APP_NAME_LOWER=$(echo "${{ env.APP_NAME }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/$APP_NAME_LOWER"
         
         echo "🏗️ Building Docker image..."
         echo "📍 Image path: $IMAGE_PATH"
@@ -132,18 +133,27 @@ jobs:
         
         # Extract Firebase variables for build args (directly from file)
         echo "📦 Extracting build arguments from .env.production..."
+        echo "🔍 Debug: First few lines of .env.production:"
+        head -5 .env.production
         
-        REACT_APP_FIREBASE_API_KEY=$(grep "^REACT_APP_FIREBASE_API_KEY=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_FIREBASE_AUTH_DOMAIN=$(grep "^REACT_APP_FIREBASE_AUTH_DOMAIN=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_FIREBASE_PROJECT_ID=$(grep "^REACT_APP_FIREBASE_PROJECT_ID=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_FIREBASE_STORAGE_BUCKET=$(grep "^REACT_APP_FIREBASE_STORAGE_BUCKET=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=$(grep "^REACT_APP_FIREBASE_MESSAGING_SENDER_ID=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_FIREBASE_APP_ID=$(grep "^REACT_APP_FIREBASE_APP_ID=" .env.production | cut -d'=' -f2- | tr -d '"')
-        REACT_APP_API_URL=$(grep "^REACT_APP_API_URL=" .env.production | cut -d'=' -f2- | tr -d '"')
+        REACT_APP_FIREBASE_API_KEY=$(grep "^REACT_APP_FIREBASE_API_KEY=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_AUTH_DOMAIN=$(grep "^REACT_APP_FIREBASE_AUTH_DOMAIN=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_PROJECT_ID=$(grep "^REACT_APP_FIREBASE_PROJECT_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_STORAGE_BUCKET=$(grep "^REACT_APP_FIREBASE_STORAGE_BUCKET=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=$(grep "^REACT_APP_FIREBASE_MESSAGING_SENDER_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_APP_ID=$(grep "^REACT_APP_FIREBASE_APP_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_API_URL=$(grep "^REACT_APP_API_URL=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
         
         echo "📊 Build args extracted:"
-        echo "- REACT_APP_FIREBASE_PROJECT_ID: $REACT_APP_FIREBASE_PROJECT_ID"
-        echo "- REACT_APP_API_URL: $REACT_APP_API_URL"
+        echo "- REACT_APP_FIREBASE_PROJECT_ID: '$REACT_APP_FIREBASE_PROJECT_ID'"
+        echo "- REACT_APP_API_URL: '$REACT_APP_API_URL'"
+        echo "- REACT_APP_FIREBASE_API_KEY length: ${#REACT_APP_FIREBASE_API_KEY}"
+        
+        # Fallback values if extraction fails
+        if [ -z "$REACT_APP_API_URL" ]; then
+          echo "⚠️ REACT_APP_API_URL is empty, using fallback"
+          REACT_APP_API_URL="http://35.209.56.146"
+        fi
         
         # Update Dockerfile ports to 3004/3005
         sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
@@ -238,11 +248,14 @@ jobs:
           echo "⏳ Waiting for services to be healthy..."
           sleep 15
           
+          # Use lowercase container name
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
           echo "📊 Container status:"
-          docker ps --filter "name=$APP_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Health}}\t{{.Ports}}"
+          docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Health}}\t{{.Ports}}"
           
           echo "🔧 Ensuring container is on web network..."
-          docker network connect web $APP_NAME 2>/dev/null || echo "ℹ️ Container already on web network"
+          docker network connect web $CONTAINER_NAME 2>/dev/null || echo "ℹ️ Container already on web network"
           
           echo "🔧 Updating Caddy configuration..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile || {
@@ -281,8 +294,11 @@ jobs:
           curl -f -m 10 http://${{ vars.VM_HOST }}/ && echo "✅ External frontend OK" || echo "❌ External frontend FAIL"
           curl -f -m 10 http://${{ vars.VM_HOST }}/api/health && echo "✅ External API OK" || echo "❌ External API FAIL"
           
+          # Use lowercase container name for logs  
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
           echo "📋 Application logs (last 30 lines):"
-          docker logs $APP_NAME --tail 30
+          docker logs $CONTAINER_NAME --tail 30
           
           echo "🎯 Deployment verification complete!"
 
@@ -312,8 +328,11 @@ jobs:
           echo "🔧 Reloading Caddy..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
           
+          # Use lowercase container name for rollback  
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
           echo "📊 Rollback status:"
-          docker ps --filter "name=$APP_NAME"
-          docker logs $APP_NAME --tail 20
+          docker ps --filter "name=$CONTAINER_NAME"
+          docker logs $CONTAINER_NAME --tail 20
           
           echo "⚠️  Rollback completed - check logs for issues"

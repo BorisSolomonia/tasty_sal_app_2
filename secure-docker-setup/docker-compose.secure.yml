@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  Tasty_Erp:
-    image: us-central1-docker.pkg.dev/nine-tones-bots-2025-468320/tasty-ar/Tasty_Erp:latest
-    container_name: Tasty_Erp
+  tasty_erp:
+    image: us-central1-docker.pkg.dev/nine-tones-bots-2025-468320/tasty-ar/tasty_erp:latest
+    container_name: tasty_erp
     restart: unless-stopped
     env_file:
       - .env
