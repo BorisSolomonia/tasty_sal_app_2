@@ -19,672 +19,485 @@ jobs:
   deploy:
     name: 🏗️ Build & Deploy
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+    
+    - name: 🔍 Debug Environment Variables
+      run: |
+        echo "🔍 Environment Variables Debug:"
+        echo "APP_NAME: '${{ env.APP_NAME }}'"
+        echo "PROJECT_ID: '${{ env.PROJECT_ID }}'"
+        echo "REGION: '${{ env.REGION }}'"
+        echo "REPOSITORY: '${{ env.REPOSITORY }}'"
+        
+        echo "🔍 GitHub Variables (raw):"
+        echo "vars.APP_NAME: '${{ vars.APP_NAME }}'"
+        echo "vars.GCP_PROJECT_ID: '${{ vars.GCP_PROJECT_ID }}'"
+        echo "vars.AR_REGION: '${{ vars.AR_REGION }}'"
+        echo "vars.AR_REPO_NAME: '${{ vars.AR_REPO_NAME }}'"
+        echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        
+        # Check if variables are empty
+        if [ -z "${{ env.REGION }}" ]; then
+          echo "❌ REGION is empty!"
+        fi
+        if [ -z "${{ env.PROJECT_ID }}" ]; then
+          echo "❌ PROJECT_ID is empty!"
+        fi
+    
+    - name: 🔐 Auth to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: ☁️ Setup Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+    
+    - name: 🔍 Debug GCP Configuration
+      run: |
+        echo "🔍 GCP Configuration Debug:"
+        echo "Current Project: $(gcloud config get-value project)"
+        echo "Current Account: $(gcloud config get-value account)"
+        
+        echo "📦 Available Artifact Registry repositories:"
+        gcloud artifacts repositories list --project=${{ env.PROJECT_ID }} || echo "❌ Failed to list repositories"
+    
+    - name: 🏭 Create Artifact Registry Repository (if needed)
+      run: |
+        echo "🏭 Creating Artifact Registry repository if it doesn't exist..."
+        
+        # Extract repository name from full path (in case AR_REPO_NAME still has full path)
+        REPO_NAME=$(echo "${{ env.REPOSITORY }}" | sed 's|.*/||')
+        echo "Repository name: $REPO_NAME"
+        
+        # Use fallback for region
+        REPO_REGION="${{ env.REGION }}"
+        if [ -z "$REPO_REGION" ]; then
+          REPO_REGION="us-central1"
+        fi
+        
+        gcloud artifacts repositories create $REPO_NAME \
+          --repository-format=docker \
+          --location=$REPO_REGION \
+          --project=${{ env.PROJECT_ID }} \
+          --description="Container images for ${{ env.APP_NAME }}" || {
+          echo "ℹ️ Repository might already exist, continuing..."
+        }
+        
+        echo "✅ Repository check/creation completed"
+        echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+    
+    - name: 🐳 Configure Docker
+      run: |
+        echo "🐳 Configuring Docker for Artifact Registry..."
+        
+        # Use fallback if REGION is empty
+        DOCKER_REGION="${{ env.REGION }}"
+        if [ -z "$DOCKER_REGION" ]; then
+          echo "⚠️ REGION is empty, using us-central1 as fallback"
+          DOCKER_REGION="us-central1"
+        fi
+        
+        echo "Docker registry: $DOCKER_REGION-docker.pkg.dev"
+        gcloud auth configure-docker $DOCKER_REGION-docker.pkg.dev --quiet
+        echo "✅ Docker configured for $DOCKER_REGION"
+        
+        # Store the region for later steps
+        echo "DOCKER_REGION=$DOCKER_REGION" >> $GITHUB_ENV
+    
+    - name: 📦 Fetch Environment Variables
+      run: |
+        echo "📦 Fetching environment from Secret Manager..."
+        echo "Secret name: ${{ env.APP_NAME }}-env"
+        echo "Project: ${{ env.PROJECT_ID }}"
+        
+        gcloud secrets versions access latest \
+          --secret="${{ env.APP_NAME }}-env" \
+          --project="${{ env.PROJECT_ID }}" > .env.production
+        
+        echo "✅ Environment variables fetched"
+        echo "📊 Variables count: $(wc -l < .env.production)"
+    
+    - name: 🏗️ Build & Push Docker Image
+      run: |
+        # Construct correct image path using DOCKER_REGION (lowercase)
+        APP_NAME_LOWER=$(echo "${{ env.APP_NAME }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/$APP_NAME_LOWER"
+        
+        echo "🏗️ Building Docker image..."
+        echo "📍 Image path: $IMAGE_PATH"
+        echo "📍 Tags: ${{ github.sha }}, latest"
+        
+        # Extract Firebase variables for build args (directly from file)
+        echo "📦 Extracting build arguments from .env.production..."
+        echo "🔍 Debug: First few lines of .env.production:"
+        head -5 .env.production
+        
+        REACT_APP_FIREBASE_API_KEY=$(grep "^REACT_APP_FIREBASE_API_KEY=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_AUTH_DOMAIN=$(grep "^REACT_APP_FIREBASE_AUTH_DOMAIN=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_PROJECT_ID=$(grep "^REACT_APP_FIREBASE_PROJECT_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_STORAGE_BUCKET=$(grep "^REACT_APP_FIREBASE_STORAGE_BUCKET=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_MESSAGING_SENDER_ID=$(grep "^REACT_APP_FIREBASE_MESSAGING_SENDER_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_FIREBASE_APP_ID=$(grep "^REACT_APP_FIREBASE_APP_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        REACT_APP_API_URL=$(grep "^REACT_APP_API_URL=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        
+        echo "📊 Build args extracted:"
+        echo "- REACT_APP_FIREBASE_PROJECT_ID: '$REACT_APP_FIREBASE_PROJECT_ID'"
+        echo "- REACT_APP_API_URL: '$REACT_APP_API_URL'"
+        echo "- REACT_APP_FIREBASE_API_KEY length: ${#REACT_APP_FIREBASE_API_KEY}"
+        
+        # Fallback values if extraction fails
+        if [ -z "$REACT_APP_API_URL" ]; then
+          echo "⚠️ REACT_APP_API_URL is empty, using fallback"
+          REACT_APP_API_URL="http://35.209.56.146"
+        fi
+        
+        # Update Dockerfile ports to 3004/3005 (if not already done)
+        echo "🔧 Updating Dockerfile ports..."
+        if grep -q "EXPOSE 3000 3001" Dockerfile; then
+          echo "Updating EXPOSE ports..."
+          sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
+        fi
+        if grep -q ":3000" Dockerfile; then
+          echo "Updating port 3000 references..."
+          sed -i 's/:3000/:3004/g' Dockerfile
+        fi
+        if grep -q ":3001" Dockerfile; then
+          echo "Updating port 3001 references..."
+          sed -i 's/:3001/:3005/g' Dockerfile
+        fi
+        echo "✅ Dockerfile updated"
+        
+        echo "🔍 Dockerfile port configuration:"
+        grep -E "(EXPOSE|:300[0-9])" Dockerfile || echo "No port references found"
+        
+        echo "🔧 Starting Docker build..."
+        echo "📋 Build arguments:"
+        echo "  REACT_APP_FIREBASE_API_KEY: [${#REACT_APP_FIREBASE_API_KEY} chars]"
+        echo "  REACT_APP_API_URL: $REACT_APP_API_URL"
+        echo "  IMAGE_PATH: $IMAGE_PATH"
+        
+        if docker build \
+          --progress=plain \
+          --build-arg REACT_APP_FIREBASE_API_KEY="$REACT_APP_FIREBASE_API_KEY" \
+          --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="$REACT_APP_FIREBASE_AUTH_DOMAIN" \
+          --build-arg REACT_APP_FIREBASE_PROJECT_ID="$REACT_APP_FIREBASE_PROJECT_ID" \
+          --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="$REACT_APP_FIREBASE_STORAGE_BUCKET" \
+          --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="$REACT_APP_FIREBASE_MESSAGING_SENDER_ID" \
+          --build-arg REACT_APP_FIREBASE_APP_ID="$REACT_APP_FIREBASE_APP_ID" \
+          --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
+          -t $IMAGE_PATH:${{ github.sha }} \
+          -t $IMAGE_PATH:latest \
+          .; then
+          echo "✅ Docker build successful"
+        else
+          echo "❌ Docker build failed"
+          echo "🔍 Docker system info:"
+          docker system info
+          echo "🔍 Docker version:"
+          docker version
+          exit 1
+        fi
+        
+        echo "📤 Pushing images..."
+        docker push $IMAGE_PATH:${{ github.sha }}
+        docker push $IMAGE_PATH:latest
+        
+        echo "✅ Images pushed successfully"
+        echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
+    
+    - name: 🔍 Debug SSH Connection
+      run: |
+        echo "🔍 SSH Connection Debug:"
+        echo "VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        echo "SSH Key length: ${#SSH_KEY}"
+        echo "SSH Key type: $(echo '${{ secrets.VM_SSH_KEY }}' | head -1)"
+        
+        # Create temporary SSH key file
+        echo "🔑 Creating temporary SSH key file..."
+        echo '${{ secrets.VM_SSH_KEY }}' > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
+        # Validate SSH key format
+        echo "🔍 Validating SSH key..."
+        ssh-keygen -y -f /tmp/ssh_key > /tmp/public_key || echo "❌ Invalid SSH key format"
+        echo "Public key fingerprint: $(ssh-keygen -lf /tmp/ssh_key)" || echo "❌ Could not get fingerprint"
+        
+        # Test SSH connectivity
+        echo "🔗 Testing SSH connectivity..."
+        ssh -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -i /tmp/ssh_key \
+            ${{ vars.VM_SSH_USER }}@${{ vars.VM_HOST }} \
+            "echo 'SSH connection successful'" || echo "❌ SSH connection failed"
+        
+        # Cleanup
+        rm -f /tmp/ssh_key /tmp/public_key
+      env:
+        SSH_KEY: ${{ secrets.VM_SSH_KEY }}
 
-      - name: 🔐 Auth to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+    - name: 🏗️ Setup VM Directories
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        script: |
+          APP_NAME="${{ env.APP_NAME }}"
+          echo "🏗️ Setting up directories for $APP_NAME..."
+          
+          # Create necessary directories
+          sudo mkdir -p /opt/$APP_NAME/secure-docker-setup
+          sudo mkdir -p /opt/$APP_NAME/infra/caddy/conf.d
+          
+          # Set proper ownership
+          sudo chown -R $USER:$USER /opt/$APP_NAME
+          
+          echo "📁 Directory structure created:"
+          ls -la /opt/$APP_NAME/ || echo "Directory doesn't exist yet"
+          
+          echo "✅ VM directories ready"
 
-      - name: ☁️ Setup Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+    - name: 📤 Upload Files to VM
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        use_insecure_cipher: false
+        rm: false
+        strip_components: 0
+        overwrite: true
+        source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy,.env.production"
+        target: /opt/${{ env.APP_NAME }}/
 
-      - name: 🏭 Ensure Artifact Registry (if needed)
-        run: |
+    - name: 🔍 Verify File Upload
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 30s
+        command_timeout: 60s
+        script: |
+          APP_NAME="${{ env.APP_NAME }}"
+          echo "🔍 Verifying file upload for $APP_NAME..."
+          
+          echo "📁 Directory contents:"
+          ls -la /opt/$APP_NAME/ || echo "❌ Main directory missing"
+          ls -la /opt/$APP_NAME/secure-docker-setup/ || echo "❌ secure-docker-setup missing"
+          ls -la /opt/$APP_NAME/infra/caddy/conf.d/ || echo "❌ caddy conf.d missing"
+          
+          echo "📄 Key files:"
+          test -f /opt/$APP_NAME/.env.production && echo "✅ .env.production exists" || echo "❌ .env.production missing"
+          test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.secure.yml && echo "✅ docker-compose.secure.yml exists" || echo "❌ docker-compose.secure.yml missing"
+          test -f /opt/$APP_NAME/infra/caddy/conf.d/$APP_NAME.caddy && echo "✅ Caddy config exists" || echo "❌ Caddy config missing"
+          
+          echo "✅ File verification completed"
+    
+    - name: 🚀 Deploy Application
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 120s
+        command_timeout: 300s
+        script: |
           set -e
-          REPO_NAME="${{ env.AR_REPO_NAME }}"
-          REPO_REGION="${{ env.REGION || 'us-central1' }}"
-          gcloud artifacts repositories create "$REPO_NAME" \
-            --repository-format=docker \
-            --location="$REPO_REGION" \
-            --project="${{ env.PROJECT_ID }}" \
-            --description="Container images for ${{ env.APP_NAME }}" || true
-          echo "REPO_NAME=$REPO_NAME" >> "$GITHUB_ENV"
-          echo "DOCKER_REGION=$REPO_REGION" >> "$GITHUB_ENV"
-
-      - name: 🐳 Configure Docker for AR
-        run: |
-          gcloud auth configure-docker "${{ env.DOCKER_REGION }}-docker.pkg.dev" --quiet
-
-      - name: 📦 Fetch env from Secret Manager → create .env (runner side)
-        run: |
+          
+          APP_NAME="${{ env.APP_NAME }}"
+          PROJECT_ID="${{ env.PROJECT_ID }}"
+          REGION="${{ env.REGION }}"
+          IMAGE_PATH="${{ env.IMAGE_PATH }}"
+          COMMIT_SHA="${{ github.sha }}"
+          
+          echo "🚀 Deploying $APP_NAME..."
+          echo "📍 Image: $IMAGE_PATH:$COMMIT_SHA"
+          echo "📍 VM Host: ${{ vars.VM_HOST }}"
+          echo "📍 Current user: $(whoami)"
+          echo "📍 Current directory: $(pwd)"
+          
+          # Error handling function
+          handle_error() {
+            local exit_code=$?
+            local line_number=$1
+            echo "❌ Error on line $line_number: Command exited with code $exit_code"
+            echo "📋 Recent commands:"
+            history | tail -5
+            exit $exit_code
+          }
+          
+          trap 'handle_error $LINENO' ERR
+          
+          cd /opt/$APP_NAME
+          
+          # Ensure .env is in place
+          mv .env.production .env || true
+          echo "📊 Environment variables loaded: $(wc -l < .env)"
+          
+          echo "🔐 Authenticating to Artifact Registry..."
+          # Use the same region fallback
+          DEPLOY_REGION="$REGION"
+          if [ -z "$DEPLOY_REGION" ]; then
+            DEPLOY_REGION="us-central1"
+          fi
+          gcloud auth configure-docker $DEPLOY_REGION-docker.pkg.dev --quiet
+          
+          echo "🌐 Ensuring Docker network exists..."
+          docker network inspect web >/dev/null 2>&1 || {
+            echo "🆕 Creating web network..."
+            docker network create web
+          }
+          echo "✅ Docker network 'web' is ready"
+          
+          echo "📝 Updating compose file with commit SHA..."
+          
+          # Verify we have the compose file
+          echo "🔍 Checking for compose file..."
+          if [ -f secure-docker-setup/docker-compose.secure.yml ]; then
+            echo "✅ Found docker-compose.secure.yml"
+          else
+            echo "❌ docker-compose.secure.yml not found"
+            echo "📁 Available files in secure-docker-setup:"
+            ls -la secure-docker-setup/ || echo "secure-docker-setup directory not found"
+            echo "📁 Available files in current directory:"
+            ls -la
+            exit 1
+          fi
+          
+          cd secure-docker-setup
+          
+          # Update image path in compose file
+          sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" docker-compose.secure.yml
+          
+          echo "📊 Compose file updated successfully:"
+          echo "🔍 Image reference in compose file:"
+          grep "image:" docker-compose.secure.yml
+          
+          echo "📦 Pulling latest image..."
+          docker compose pull
+          
+          echo "🔄 Deploying application..."
+          docker compose down --remove-orphans || true
+          docker compose up -d
+          
+          echo "⏳ Waiting for services to be healthy..."
+          sleep 15
+          
+          # Use lowercase container name
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          echo "📊 Container status:"
+          docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Health}}\t{{.Ports}}"
+          
+          echo "🔧 Ensuring container is on web network..."
+          docker network connect web $CONTAINER_NAME 2>/dev/null || echo "ℹ️ Container already on web network"
+          
+          echo "🔧 Updating Caddy configuration..."
+          docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile || {
+            echo "❌ Caddy reload failed, retrying..."
+            sleep 5
+            docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+          }
+          
+          echo "✅ Deployment completed successfully!"
+    
+    - name: 🔍 Health Check & Tests
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 60s
+        command_timeout: 120s
+        script: |
           set -e
-          echo "Fetching secret '${{ env.APP_NAME }}-env' from project '${{ env.PROJECT_ID }}'"
-          gcloud secrets versions access latest \
-            --secret="${{ env.APP_NAME }}-env" \
-            --project="${{ env.PROJECT_ID }}" > .env
-          # Minimal sanity check
-          echo "Lines in .env: $(wc -l < .env)"
-          head -n 5 .env || true
+          
+          APP_NAME="${{ env.APP_NAME }}"
+          
+          echo "🔍 Running comprehensive health checks..."
+          
+          # Wait for services to fully start
+          echo "⏳ Waiting for services to stabilize..."
+          sleep 15
+          
+          # VM internal checks
+          echo "📍 VM internal health check:"
+          curl -f -m 10 http://localhost/ && echo "✅ Frontend OK" || echo "❌ Frontend FAIL"
+          curl -f -m 10 http://localhost/api/health && echo "✅ Backend API OK" || echo "❌ Backend API FAIL"
+          curl -f -m 10 http://localhost/health/$APP_NAME && echo "✅ Health endpoint OK" || echo "❌ Health endpoint FAIL"
+          
+          # External checks
+          echo "📍 External health check:"
+          curl -f -m 10 http://${{ vars.VM_HOST }}/ && echo "✅ External frontend OK" || echo "❌ External frontend FAIL"
+          curl -f -m 10 http://${{ vars.VM_HOST }}/api/health && echo "✅ External API OK" || echo "❌ External API FAIL"
+          
+          # Use lowercase container name for logs  
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          echo "📋 Application logs (last 30 lines):"
+          docker logs $CONTAINER_NAME --tail 30
+          
+          echo "🎯 Deployment verification complete!"
 
-      - name: 🏗️ Build & Push Docker Image
-        run: |
-          set -e
-          APP_NAME_LOWER="$(echo "${{ env.APP_NAME }}" | tr '[:upper:]' '[:lower:]')"
-          IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/$APP_NAME_LOWER"
-          echo "IMAGE_PATH=$IMAGE_PATH" >> "$GITHUB_ENV"
+    - name: 🔍 Debug Rollback Variables
+      if: failure()
+      run: |
+        echo "🔍 Rollback Debug Variables:"
+        echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
+        echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
+        echo "APP_NAME: '${{ env.APP_NAME }}'"
+        echo "IMAGE_PATH: '${{ env.IMAGE_PATH }}'"
 
-          # Extract only the build args you need from the in-memory .env (without creating .env.production)
-          read_kv () { grep -E "^$1=" .env | sed 's/^'"$1"'=//'; }
-          REACT_APP_FIREBASE_API_KEY="$(read_kv REACT_APP_FIREBASE_API_KEY || true)"
-          REACT_APP_FIREBASE_AUTH_DOMAIN="$(read_kv REACT_APP_FIREBASE_AUTH_DOMAIN || true)"
-          REACT_APP_FIREBASE_PROJECT_ID="$(read_kv REACT_APP_FIREBASE_PROJECT_ID || true)"
-          REACT_APP_FIREBASE_STORAGE_BUCKET="$(read_kv REACT_APP_FIREBASE_STORAGE_BUCKET || true)"
-          REACT_APP_FIREBASE_MESSAGING_SENDER_ID="$(read_kv REACT_APP_FIREBASE_MESSAGING_SENDER_ID || true)"
-          REACT_APP_FIREBASE_APP_ID="$(read_kv REACT_APP_FIREBASE_APP_ID || true)"
-          REACT_APP_API_URL="$(read_kv REACT_APP_API_URL || true)"
-
-          docker build \
-            --progress=plain \
-            --build-arg REACT_APP_FIREBASE_API_KEY="$REACT_APP_FIREBASE_API_KEY" \
-            --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="$REACT_APP_FIREBASE_AUTH_DOMAIN" \
-            --build-arg REACT_APP_FIREBASE_PROJECT_ID="$REACT_APP_FIREBASE_PROJECT_ID" \
-            --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="$REACT_APP_FIREBASE_STORAGE_BUCKET" \
-            --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="$REACT_APP_FIREBASE_MESSAGING_SENDER_ID" \
-            --build-arg REACT_APP_FIREBASE_APP_ID="$REACT_APP_FIREBASE_APP_ID" \
-            --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
-            -t "$IMAGE_PATH:${{ github.sha }}" \
-            -t "$IMAGE_PATH:latest" \
-            .
-
-          docker push "$IMAGE_PATH:${{ github.sha }}"
-          docker push "$IMAGE_PATH:latest"
-
-      - name: 🔍 Debug SSH Connection
-        run: |
-          echo "VM_HOST: '${{ vars.VM_HOST }}'"
-          echo "VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
-          echo '${{ secrets.VM_SSH_KEY }}' > /tmp/ssh_key
-          chmod 600 /tmp/ssh_key
-          ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i /tmp/ssh_key \
-            "${{ vars.VM_SSH_USER }}@${{ vars.VM_HOST }}" "echo 'SSH OK'"
-          rm -f /tmp/ssh_key
-
-      - name: 🏗️ Prepare VM directories
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            set -e
-            APP="/opt/${{ env.APP_NAME }}"
-            sudo mkdir -p "$APP/secure-docker-setup" "$APP/infra/caddy/conf.d"
-            sudo chown -R $USER:$USER "$APP"
-            ls -la "$APP" || true
-
-      # ⬇️ Copy only what we need; no .env.production anywhere
-      - name: 📤 Upload compose & caddy config
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          overwrite: true
-          source: "secure-docker-setup/docker-compose.yml,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy"
-          target: "/opt/${{ env.APP_NAME }}/"
-
-      # ⬇️ Upload the already-fetched .env to the **parent** folder on VM
-      - name: 📤 Upload .env to /opt/<APP>/.env
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          overwrite: true
-          source: ".env"
-          target: "/opt/${{ env.APP_NAME }}/"
-
-      - name: 🚀 Deploy on VM (compose -f secure-docker-setup/docker-compose.yml)
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          IMAGE_PATH: ${{ env.IMAGE_PATH }}
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            set -e
-            APP="/opt/${{ env.APP_NAME }}"
-            cd "$APP"
-
-            echo "🔧 Inject new image tag into compose"
-            sed -i "s|^\s*image: .*|    image: ${IMAGE_PATH}:${{ github.sha }}|" secure-docker-setup/docker-compose.yml
-
-            echo "🐳 docker compose pull (using top-level .env)"
-            docker compose -f secure-docker-setup/docker-compose.yml pull
-
-            echo "🔄 Up -d"
-            docker compose -f secure-docker-setup/docker-compose.yml down --remove-orphans || true
-            docker compose -f secure-docker-setup/docker-compose.yml up -d
-
-            echo "🌐 Network 'web'"
-            docker network inspect web >/dev/null 2>&1 || docker network create web
-
-            echo "📊 Status"
-            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-
-            echo "♻️ Reload Caddy if present"
-            docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile || true
-
-      - name: 🏥 Health check
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            set -e
-            curl -f -m 10 http://localhost/ || true
-            curl -f -m 10 http://localhost/api/health || true
-            docker logs tasty_erp --tail 50 || true
-
-
-
-
-# name: 🚀 Deploy Tasty ERP
-
-# on:
-#   push:
-#     branches: [ main, master ]
-#   workflow_dispatch:
-
-# concurrency:
-#   group: deploy-tasty-erp
-#   cancel-in-progress: false
-
-# env:
-#   APP_NAME: ${{ vars.APP_NAME || 'Tasty_Erp' }}
-#   PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'nine-tones-bots-2025-468320' }}
-#   REGION: ${{ vars.AR_REGION || 'us-central1' }}
-#   REPOSITORY: ${{ vars.AR_REPO_NAME || 'tasty-ar' }}
-
-# jobs:
-#   deploy:
-#     name: 🏗️ Build & Deploy
-#     runs-on: ubuntu-latest
-    
-#     steps:
-#     - name: 📥 Checkout Code
-#       uses: actions/checkout@v4
-    
-#     - name: 🔍 Debug Environment Variables
-#       run: |
-#         echo "🔍 Environment Variables Debug:"
-#         echo "APP_NAME: '${{ env.APP_NAME }}'"
-#         echo "PROJECT_ID: '${{ env.PROJECT_ID }}'"
-#         echo "REGION: '${{ env.REGION }}'"
-#         echo "REPOSITORY: '${{ env.REPOSITORY }}'"
-        
-#         echo "🔍 GitHub Variables (raw):"
-#         echo "vars.APP_NAME: '${{ vars.APP_NAME }}'"
-#         echo "vars.GCP_PROJECT_ID: '${{ vars.GCP_PROJECT_ID }}'"
-#         echo "vars.AR_REGION: '${{ vars.AR_REGION }}'"
-#         echo "vars.AR_REPO_NAME: '${{ vars.AR_REPO_NAME }}'"
-#         echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
-#         echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
-        
-#         # Check if variables are empty
-#         if [ -z "${{ env.REGION }}" ]; then
-#           echo "❌ REGION is empty!"
-#         fi
-#         if [ -z "${{ env.PROJECT_ID }}" ]; then
-#           echo "❌ PROJECT_ID is empty!"
-#         fi
-    
-#     - name: 🔐 Auth to Google Cloud
-#       uses: google-github-actions/auth@v2
-#       with:
-#         credentials_json: ${{ secrets.GCP_SA_KEY }}
-    
-#     - name: ☁️ Setup Cloud SDK
-#       uses: google-github-actions/setup-gcloud@v2
-    
-#     - name: 🔍 Debug GCP Configuration
-#       run: |
-#         echo "🔍 GCP Configuration Debug:"
-#         echo "Current Project: $(gcloud config get-value project)"
-#         echo "Current Account: $(gcloud config get-value account)"
-        
-#         echo "📦 Available Artifact Registry repositories:"
-#         gcloud artifacts repositories list --project=${{ env.PROJECT_ID }} || echo "❌ Failed to list repositories"
-    
-#     - name: 🏭 Create Artifact Registry Repository (if needed)
-#       run: |
-#         echo "🏭 Creating Artifact Registry repository if it doesn't exist..."
-        
-#         # Extract repository name from full path (in case AR_REPO_NAME still has full path)
-#         REPO_NAME=$(echo "${{ env.REPOSITORY }}" | sed 's|.*/||')
-#         echo "Repository name: $REPO_NAME"
-        
-#         # Use fallback for region
-#         REPO_REGION="${{ env.REGION }}"
-#         if [ -z "$REPO_REGION" ]; then
-#           REPO_REGION="us-central1"
-#         fi
-        
-#         gcloud artifacts repositories create $REPO_NAME \
-#           --repository-format=docker \
-#           --location=$REPO_REGION \
-#           --project=${{ env.PROJECT_ID }} \
-#           --description="Container images for ${{ env.APP_NAME }}" || {
-#           echo "ℹ️ Repository might already exist, continuing..."
-#         }
-        
-#         echo "✅ Repository check/creation completed"
-#         echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
-    
-#     - name: 🐳 Configure Docker
-#       run: |
-#         echo "🐳 Configuring Docker for Artifact Registry..."
-        
-#         # Use fallback if REGION is empty
-#         DOCKER_REGION="${{ env.REGION }}"
-#         if [ -z "$DOCKER_REGION" ]; then
-#           echo "⚠️ REGION is empty, using us-central1 as fallback"
-#           DOCKER_REGION="us-central1"
-#         fi
-        
-#         echo "Docker registry: $DOCKER_REGION-docker.pkg.dev"
-#         gcloud auth configure-docker $DOCKER_REGION-docker.pkg.dev --quiet
-#         echo "✅ Docker configured for $DOCKER_REGION"
-        
-#         # Store the region for later steps
-#         echo "DOCKER_REGION=$DOCKER_REGION" >> $GITHUB_ENV
-    
-#     - name: 📦 Fetch Environment Variables
-#       run: |
-#         echo "📦 Fetching environment from Secret Manager..."
-#         echo "Secret name: ${{ env.APP_NAME }}-env"
-#         echo "Project: ${{ env.PROJECT_ID }}"
-        
-#         gcloud secrets versions access latest \
-#           --secret="${{ env.APP_NAME }}-env" \
-#           --project="${{ env.PROJECT_ID }}" > .env.production
-        
-#         echo "✅ Environment variables fetched"
-#         echo "📊 Variables count: $(wc -l < .env.production)"
-    
-#     - name: 🏗️ Build & Push Docker Image
-#       run: |
-#         # Construct correct image path using DOCKER_REGION (lowercase)
-#         APP_NAME_LOWER=$(echo "${{ env.APP_NAME }}" | tr '[:upper:]' '[:lower:]')
-#         IMAGE_PATH="${{ env.DOCKER_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/$APP_NAME_LOWER"
-        
-#         echo "🏗️ Building Docker image..."
-#         echo "📍 Image path: $IMAGE_PATH"
-#         echo "📍 Tags: ${{ github.sha }}, latest"
-        
-#         # Extract Firebase variables for build args (directly from file)
-#         echo "📦 Extracting build arguments from .env.production..."
-#         echo "🔍 Debug: First few lines of .env.production:"
-#         head -5 .env.production
-        
-#         REACT_APP_FIREBASE_API_KEY=$(grep "^REACT_APP_FIREBASE_API_KEY=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_FIREBASE_AUTH_DOMAIN=$(grep "^REACT_APP_FIREBASE_AUTH_DOMAIN=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_FIREBASE_PROJECT_ID=$(grep "^REACT_APP_FIREBASE_PROJECT_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_FIREBASE_STORAGE_BUCKET=$(grep "^REACT_APP_FIREBASE_STORAGE_BUCKET=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_FIREBASE_MESSAGING_SENDER_ID=$(grep "^REACT_APP_FIREBASE_MESSAGING_SENDER_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_FIREBASE_APP_ID=$(grep "^REACT_APP_FIREBASE_APP_ID=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-#         REACT_APP_API_URL=$(grep "^REACT_APP_API_URL=" .env.production | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-        
-#         echo "📊 Build args extracted:"
-#         echo "- REACT_APP_FIREBASE_PROJECT_ID: '$REACT_APP_FIREBASE_PROJECT_ID'"
-#         echo "- REACT_APP_API_URL: '$REACT_APP_API_URL'"
-#         echo "- REACT_APP_FIREBASE_API_KEY length: ${#REACT_APP_FIREBASE_API_KEY}"
-        
-#         # Fallback values if extraction fails
-#         if [ -z "$REACT_APP_API_URL" ]; then
-#           echo "⚠️ REACT_APP_API_URL is empty, using fallback"
-#           REACT_APP_API_URL="http://35.209.56.146"
-#         fi
-        
-#         # Update Dockerfile ports to 3004/3005 (if not already done)
-#         echo "🔧 Updating Dockerfile ports..."
-#         if grep -q "EXPOSE 3000 3001" Dockerfile; then
-#           echo "Updating EXPOSE ports..."
-#           sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
-#         fi
-#         if grep -q ":3000" Dockerfile; then
-#           echo "Updating port 3000 references..."
-#           sed -i 's/:3000/:3004/g' Dockerfile
-#         fi
-#         if grep -q ":3001" Dockerfile; then
-#           echo "Updating port 3001 references..."
-#           sed -i 's/:3001/:3005/g' Dockerfile
-#         fi
-#         echo "✅ Dockerfile updated"
-        
-#         echo "🔍 Dockerfile port configuration:"
-#         grep -E "(EXPOSE|:300[0-9])" Dockerfile || echo "No port references found"
-        
-#         echo "🔧 Starting Docker build..."
-#         echo "📋 Build arguments:"
-#         echo "  REACT_APP_FIREBASE_API_KEY: [${#REACT_APP_FIREBASE_API_KEY} chars]"
-#         echo "  REACT_APP_API_URL: $REACT_APP_API_URL"
-#         echo "  IMAGE_PATH: $IMAGE_PATH"
-        
-#         if docker build \
-#           --progress=plain \
-#           --build-arg REACT_APP_FIREBASE_API_KEY="$REACT_APP_FIREBASE_API_KEY" \
-#           --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="$REACT_APP_FIREBASE_AUTH_DOMAIN" \
-#           --build-arg REACT_APP_FIREBASE_PROJECT_ID="$REACT_APP_FIREBASE_PROJECT_ID" \
-#           --build-arg REACT_APP_FIREBASE_STORAGE_BUCKET="$REACT_APP_FIREBASE_STORAGE_BUCKET" \
-#           --build-arg REACT_APP_FIREBASE_MESSAGING_SENDER_ID="$REACT_APP_FIREBASE_MESSAGING_SENDER_ID" \
-#           --build-arg REACT_APP_FIREBASE_APP_ID="$REACT_APP_FIREBASE_APP_ID" \
-#           --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
-#           -t $IMAGE_PATH:${{ github.sha }} \
-#           -t $IMAGE_PATH:latest \
-#           .; then
-#           echo "✅ Docker build successful"
-#         else
-#           echo "❌ Docker build failed"
-#           echo "🔍 Docker system info:"
-#           docker system info
-#           echo "🔍 Docker version:"
-#           docker version
-#           exit 1
-#         fi
-        
-#         echo "📤 Pushing images..."
-#         docker push $IMAGE_PATH:${{ github.sha }}
-#         docker push $IMAGE_PATH:latest
-        
-#         echo "✅ Images pushed successfully"
-#         echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
-    
-#     - name: 🔍 Debug SSH Connection
-#       run: |
-#         echo "🔍 SSH Connection Debug:"
-#         echo "VM_HOST: '${{ vars.VM_HOST }}'"
-#         echo "VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
-#         echo "SSH Key length: ${#SSH_KEY}"
-#         echo "SSH Key type: $(echo '${{ secrets.VM_SSH_KEY }}' | head -1)"
-        
-#         # Create temporary SSH key file
-#         echo "🔑 Creating temporary SSH key file..."
-#         echo '${{ secrets.VM_SSH_KEY }}' > /tmp/ssh_key
-#         chmod 600 /tmp/ssh_key
-        
-#         # Validate SSH key format
-#         echo "🔍 Validating SSH key..."
-#         ssh-keygen -y -f /tmp/ssh_key > /tmp/public_key || echo "❌ Invalid SSH key format"
-#         echo "Public key fingerprint: $(ssh-keygen -lf /tmp/ssh_key)" || echo "❌ Could not get fingerprint"
-        
-#         # Test SSH connectivity
-#         echo "🔗 Testing SSH connectivity..."
-#         ssh -o ConnectTimeout=10 \
-#             -o StrictHostKeyChecking=no \
-#             -o UserKnownHostsFile=/dev/null \
-#             -i /tmp/ssh_key \
-#             ${{ vars.VM_SSH_USER }}@${{ vars.VM_HOST }} \
-#             "echo 'SSH connection successful'" || echo "❌ SSH connection failed"
-        
-#         # Cleanup
-#         rm -f /tmp/ssh_key /tmp/public_key
-#       env:
-#         SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-
-#     - name: 🏗️ Setup VM Directories
-#       uses: appleboy/ssh-action@v1.0.3
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 30s
-#         command_timeout: 60s
-#         script: |
-#           APP_NAME="${{ env.APP_NAME }}"
-#           echo "🏗️ Setting up directories for $APP_NAME..."
+    - name: ❌ Rollback on Failure
+      if: failure()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: "35.209.56.146"
+        username: "borissolomonia"
+        key: ${{ secrets.VM_SSH_KEY }}
+        port: 22
+        timeout: 60s
+        command_timeout: 120s
+        script: |
+          APP_NAME="${{ env.APP_NAME }}"
+          IMAGE_PATH="${{ env.IMAGE_PATH }}"
           
-#           # Create necessary directories
-#           sudo mkdir -p /opt/$APP_NAME/secure-docker-setup
-#           sudo mkdir -p /opt/$APP_NAME/infra/caddy/conf.d
+          echo "❌ Deployment failed, initiating rollback..."
+          echo "📍 Rolling back to: $IMAGE_PATH:latest"
           
-#           # Set proper ownership
-#           sudo chown -R $USER:$USER /opt/$APP_NAME
+          cd /opt/$APP_NAME/secure-docker-setup
           
-#           echo "📁 Directory structure created:"
-#           ls -la /opt/$APP_NAME/ || echo "Directory doesn't exist yet"
+          # Rollback to latest tag
+          sed -i "s|:${{ github.sha }}|:latest|g" docker-compose.secure.yml
           
-#           echo "✅ VM directories ready"
-
-#     - name: 📤 Upload Files to VM
-#       uses: appleboy/scp-action@v0.1.7
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 30s
-#         command_timeout: 60s
-#         use_insecure_cipher: false
-#         rm: false
-#         strip_components: 0
-#         overwrite: true
-#         source: "secure-docker-setup/,infra/caddy/conf.d/${{ env.APP_NAME }}.caddy,.env.production"
-#         target: /opt/${{ env.APP_NAME }}/
-
-#     - name: 🔍 Verify File Upload
-#       uses: appleboy/ssh-action@v1.0.3
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 30s
-#         command_timeout: 60s
-#         script: |
-#           APP_NAME="${{ env.APP_NAME }}"
-#           echo "🔍 Verifying file upload for $APP_NAME..."
+          echo "🔄 Rolling back to previous version..."
+          docker compose down
+          docker compose up -d
           
-#           echo "📁 Directory contents:"
-#           ls -la /opt/$APP_NAME/ || echo "❌ Main directory missing"
-#           ls -la /opt/$APP_NAME/secure-docker-setup/ || echo "❌ secure-docker-setup missing"
-#           ls -la /opt/$APP_NAME/infra/caddy/conf.d/ || echo "❌ caddy conf.d missing"
+          echo "🔧 Reloading Caddy..."
+          docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
           
-#           echo "📄 Key files:"
-#           test -f /opt/$APP_NAME/.env.production && echo "✅ .env.production exists" || echo "❌ .env.production missing"
-#           test -f /opt/$APP_NAME/secure-docker-setup/docker-compose.secure.yml && echo "✅ docker-compose.secure.yml exists" || echo "❌ docker-compose.secure.yml missing"
-#           test -f /opt/$APP_NAME/infra/caddy/conf.d/$APP_NAME.caddy && echo "✅ Caddy config exists" || echo "❌ Caddy config missing"
+          # Use lowercase container name for rollback  
+          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
           
-#           echo "✅ File verification completed"
-    
-#     - name: 🚀 Deploy Application
-#       uses: appleboy/ssh-action@v1.0.3
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 120s
-#         command_timeout: 300s
-#         script: |
-#           set -e
+          echo "📊 Rollback status:"
+          docker ps --filter "name=$CONTAINER_NAME"
+          docker logs $CONTAINER_NAME --tail 20
           
-#           APP_NAME="${{ env.APP_NAME }}"
-#           PROJECT_ID="${{ env.PROJECT_ID }}"
-#           REGION="${{ env.REGION }}"
-#           IMAGE_PATH="${{ env.IMAGE_PATH }}"
-#           COMMIT_SHA="${{ github.sha }}"
-          
-#           echo "🚀 Deploying $APP_NAME..."
-#           echo "📍 Image: $IMAGE_PATH:$COMMIT_SHA"
-#           echo "📍 VM Host: ${{ vars.VM_HOST }}"
-#           echo "📍 Current user: $(whoami)"
-#           echo "📍 Current directory: $(pwd)"
-          
-#           # Error handling function
-#           handle_error() {
-#             local exit_code=$?
-#             local line_number=$1
-#             echo "❌ Error on line $line_number: Command exited with code $exit_code"
-#             echo "📋 Recent commands:"
-#             history | tail -5
-#             exit $exit_code
-#           }
-          
-#           trap 'handle_error $LINENO' ERR
-          
-#           cd /opt/$APP_NAME
-          
-#           # Ensure .env is in place
-#           mv .env.production .env || true
-#           echo "📊 Environment variables loaded: $(wc -l < .env)"
-          
-#           echo "🔐 Authenticating to Artifact Registry..."
-#           # Use the same region fallback
-#           DEPLOY_REGION="$REGION"
-#           if [ -z "$DEPLOY_REGION" ]; then
-#             DEPLOY_REGION="us-central1"
-#           fi
-#           gcloud auth configure-docker $DEPLOY_REGION-docker.pkg.dev --quiet
-          
-#           echo "🌐 Ensuring Docker network exists..."
-#           docker network inspect web >/dev/null 2>&1 || {
-#             echo "🆕 Creating web network..."
-#             docker network create web
-#           }
-#           echo "✅ Docker network 'web' is ready"
-          
-#           echo "📝 Updating compose file with commit SHA..."
-          
-#           # Verify we have the compose file
-#           echo "🔍 Checking for compose file..."
-#           if [ -f secure-docker-setup/docker-compose.secure.yml ]; then
-#             echo "✅ Found docker-compose.secure.yml"
-#           else
-#             echo "❌ docker-compose.secure.yml not found"
-#             echo "📁 Available files in secure-docker-setup:"
-#             ls -la secure-docker-setup/ || echo "secure-docker-setup directory not found"
-#             echo "📁 Available files in current directory:"
-#             ls -la
-#             exit 1
-#           fi
-          
-#           cd secure-docker-setup
-          
-#           # Update image path in compose file
-#           sed -i "s|image: .*|image: $IMAGE_PATH:$COMMIT_SHA|g" docker-compose.secure.yml
-          
-#           echo "📊 Compose file updated successfully:"
-#           echo "🔍 Image reference in compose file:"
-#           grep "image:" docker-compose.secure.yml
-          
-#           echo "📦 Pulling latest image..."
-#           docker compose pull
-          
-#           echo "🔄 Deploying application..."
-#           docker compose down --remove-orphans || true
-#           docker compose up -d
-          
-#           echo "⏳ Waiting for services to be healthy..."
-#           sleep 15
-          
-#           # Use lowercase container name
-#           CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
-          
-#           echo "📊 Container status:"
-#           docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Health}}\t{{.Ports}}"
-          
-#           echo "🔧 Ensuring container is on web network..."
-#           docker network connect web $CONTAINER_NAME 2>/dev/null || echo "ℹ️ Container already on web network"
-          
-#           echo "🔧 Updating Caddy configuration..."
-#           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile || {
-#             echo "❌ Caddy reload failed, retrying..."
-#             sleep 5
-#             docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
-#           }
-          
-#           echo "✅ Deployment completed successfully!"
-    
-#     - name: 🔍 Health Check & Tests
-#       uses: appleboy/ssh-action@v1.0.3
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 60s
-#         command_timeout: 120s
-#         script: |
-#           set -e
-          
-#           APP_NAME="${{ env.APP_NAME }}"
-          
-#           echo "🔍 Running comprehensive health checks..."
-          
-#           # Wait for services to fully start
-#           echo "⏳ Waiting for services to stabilize..."
-#           sleep 15
-          
-#           # VM internal checks
-#           echo "📍 VM internal health check:"
-#           curl -f -m 10 http://localhost/ && echo "✅ Frontend OK" || echo "❌ Frontend FAIL"
-#           curl -f -m 10 http://localhost/api/health && echo "✅ Backend API OK" || echo "❌ Backend API FAIL"
-#           curl -f -m 10 http://localhost/health/$APP_NAME && echo "✅ Health endpoint OK" || echo "❌ Health endpoint FAIL"
-          
-#           # External checks
-#           echo "📍 External health check:"
-#           curl -f -m 10 http://${{ vars.VM_HOST }}/ && echo "✅ External frontend OK" || echo "❌ External frontend FAIL"
-#           curl -f -m 10 http://${{ vars.VM_HOST }}/api/health && echo "✅ External API OK" || echo "❌ External API FAIL"
-          
-#           # Use lowercase container name for logs  
-#           CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
-          
-#           echo "📋 Application logs (last 30 lines):"
-#           docker logs $CONTAINER_NAME --tail 30
-          
-#           echo "🎯 Deployment verification complete!"
-
-#     - name: 🔍 Debug Rollback Variables
-#       if: failure()
-#       run: |
-#         echo "🔍 Rollback Debug Variables:"
-#         echo "vars.VM_HOST: '${{ vars.VM_HOST }}'"
-#         echo "vars.VM_SSH_USER: '${{ vars.VM_SSH_USER }}'"
-#         echo "APP_NAME: '${{ env.APP_NAME }}'"
-#         echo "IMAGE_PATH: '${{ env.IMAGE_PATH }}'"
-
-#     - name: ❌ Rollback on Failure
-#       if: failure()
-#       uses: appleboy/ssh-action@v1.0.3
-#       with:
-#         host: "35.209.56.146"
-#         username: "borissolomonia"
-#         key: ${{ secrets.VM_SSH_KEY }}
-#         port: 22
-#         timeout: 60s
-#         command_timeout: 120s
-#         script: |
-#           APP_NAME="${{ env.APP_NAME }}"
-#           IMAGE_PATH="${{ env.IMAGE_PATH }}"
-          
-#           echo "❌ Deployment failed, initiating rollback..."
-#           echo "📍 Rolling back to: $IMAGE_PATH:latest"
-          
-#           cd /opt/$APP_NAME/secure-docker-setup
-          
-#           # Rollback to latest tag
-#           sed -i "s|:${{ github.sha }}|:latest|g" docker-compose.secure.yml
-          
-#           echo "🔄 Rolling back to previous version..."
-#           docker compose down
-#           docker compose up -d
-          
-#           echo "🔧 Reloading Caddy..."
-#           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
-          
-#           # Use lowercase container name for rollback  
-#           CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
-          
-#           echo "📊 Rollback status:"
-#           docker ps --filter "name=$CONTAINER_NAME"
-#           docker logs $CONTAINER_NAME --tail 20
-          
-#           echo "⚠️  Rollback completed - check logs for issues"
+          echo "⚠️  Rollback completed - check logs for issues"
