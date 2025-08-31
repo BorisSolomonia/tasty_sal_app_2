@@ -9,7 +9,7 @@ This guide covers deploying the 9-tones-app using the new optimized Dockerfile t
 - **Container**: Multi-stage build with optimized layers
 - **Health Checks**: Built-in health monitoring for both services
 
-## 🚀 Quick Start
+## 🚀 Quick Start!
 
 ### Option 1: Using Docker Compose (Recommended)
 ```bash
