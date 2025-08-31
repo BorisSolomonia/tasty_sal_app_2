@@ -130,8 +130,11 @@ jobs:
         echo "📍 Image path: $IMAGE_PATH"
         echo "📍 Tags: ${{ github.sha }}, latest"
         
-        # Extract Firebase variables for build args
-        source .env.production
+        # Extract Firebase variables for build args (using eval to handle quotes)
+        echo "📦 Loading environment variables safely..."
+        set -o allexport
+        source <(sed 's/^/export /' .env.production)
+        set +o allexport
         
         # Update Dockerfile ports to 3004/3005
         sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
