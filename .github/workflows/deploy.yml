@@ -323,7 +323,7 @@ jobs:
           echo "📦 Creating .env file from Secret Manager..."
           echo "Secret name: $APP_NAME-env"
           echo "Project: $PROJECT_ID"
-          echo "Target: /opt/$APP_NAME/.env"
+          echo "Target: /opt/$APP_NAME/secure-docker-setup/.env"
           
           # Fetch environment variables from Secret Manager and save to .env
           gcloud secrets versions access latest \
@@ -332,7 +332,7 @@ jobs:
           
           echo "🔧 Cleaning .env file format..."
           # Clean the .env file: remove empty lines, comments, and fix formatting
-          grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /tmp/raw_env > /opt/$APP_NAME/.env || {
+          grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /tmp/raw_env > /opt/$APP_NAME/secure-docker-setup/.env || {
             echo "❌ No valid environment variables found!"
             echo "🔍 Raw content from Secret Manager:"
             cat /tmp/raw_env
@@ -343,9 +343,9 @@ jobs:
           rm -f /tmp/raw_env
           
           echo "✅ .env file created and cleaned successfully"
-          echo "📊 Environment variables count: $(wc -l < /opt/$APP_NAME/.env)"
+          echo "📊 Environment variables count: $(wc -l < /opt/$APP_NAME/secure-docker-setup/.env)"
           echo "🔍 First few lines (sanitized):"
-          head -5 /opt/$APP_NAME/.env | sed 's/=.*/=***/' || true
+          head -5 /opt/$APP_NAME/secure-docker-setup/.env | sed 's/=.*/=***/' || true
     
     - name: 🚀 Deploy Application
       uses: appleboy/ssh-action@v1.0.3
@@ -386,11 +386,11 @@ jobs:
           cd /opt/$APP_NAME
           
           # Verify .env file exists
-          if [ ! -f .env ]; then
-            echo "❌ .env file not found!"
+          if [ ! -f secure-docker-setup/.env ]; then
+            echo "❌ .env file not found at secure-docker-setup/.env!"
             exit 1
           fi
-          echo "📊 Environment variables loaded: $(wc -l < .env)"
+          echo "📊 Environment variables loaded: $(wc -l < secure-docker-setup/.env)"
           
           echo "🔐 Authenticating to Artifact Registry..."
           # Use the same region fallback
@@ -430,11 +430,11 @@ jobs:
           grep "image:" secure-docker-setup/docker-compose.yml
           
           echo "📦 Pulling latest image..."
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env pull
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env pull
           
           echo "🔄 Deploying application..."
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env down --remove-orphans || true
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env up -d
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env down --remove-orphans || true
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env up -d
           
           echo "⏳ Waiting for services to be healthy..."
           sleep 15
@@ -528,8 +528,8 @@ jobs:
           sed -i "s|:${{ github.sha }}|:latest|g" secure-docker-setup/docker-compose.yml
           
           echo "🔄 Rolling back to previous version..."
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env down
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file .env up -d
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env down
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env up -d
           
           echo "🔧 Reloading Caddy..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
