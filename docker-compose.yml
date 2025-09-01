@@ -2,8 +2,6 @@
 # This exposes direct ports for development/testing
 # For production deployment, use compose.yml with Caddy reverse proxy
 
-version: '3.8'
-
 services:
   nine-tones-app:
     build:

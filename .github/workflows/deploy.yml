@@ -422,7 +422,7 @@ jobs:
           docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env up -d
           
           echo "⏳ Waiting for services to be healthy..."
-          sleep 15
+          sleep 35
           
           # Use consistent container name (matches Caddyfile expectations)
           CONTAINER_NAME="nine-tones-app"
@@ -431,7 +431,7 @@ jobs:
           docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           
           echo "🔍 Container health status:"
-          docker inspect $CONTAINER_NAME --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+          docker inspect $CONTAINER_NAME --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null || echo "No health check configured"
           
           echo "🔧 Ensuring container is on web network..."
           docker network connect web $CONTAINER_NAME 2>/dev/null || echo "ℹ️ Container already on web network"
