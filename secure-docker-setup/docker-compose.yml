@@ -1,19 +1,19 @@
 version: '3.8'
 
 services:
-  tasty_erp:
+  nine-tones-app:
     image: us-central1-docker.pkg.dev/nine-tones-bots-2025-468320/tasty-ar/tasty_erp:latest
-    container_name: tasty_erp
+    container_name: nine-tones-app
     restart: unless-stopped
     env_file:
       - .env
     networks:
       - web
     expose:
-      - "3004"  # Frontend port
-      - "3005"  # Backend API port
+      - "3000"  # Frontend port
+      - "3001"  # Backend API port
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:3004 && curl -f http://localhost:3005/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:3000 && curl -f http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3

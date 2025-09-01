@@ -101,13 +101,13 @@ echo "🔍 Frontend build files:"\n\
 ls -la frontend/build/ || echo "❌ frontend/build directory not found"\n\
 \n\
 # Start backend API server\n\
-echo "📡 Starting backend API on port ${PORT:-3005}..."\n\
+echo "📡 Starting backend API on port ${PORT:-3001}..."\n\
 cd /app/backend && node dist/index.js &\n\
 BACKEND_PID=$!\n\
 \n\
 # Start frontend static server\n\
-echo "🌐 Starting frontend on port ${FRONTEND_PORT:-3004}..."\n\
-cd /app && npx serve -s frontend/build -p ${FRONTEND_PORT:-3004} --single &\n\
+echo "🌐 Starting frontend on port ${FRONTEND_PORT:-3000}..."\n\
+cd /app && npx serve -s frontend/build -p ${FRONTEND_PORT:-3000} --single &\n\
 FRONTEND_PID=$!\n\
 \n\
 # Function to handle shutdown\n\
@@ -123,8 +123,8 @@ shutdown() {\n\
 trap shutdown SIGTERM SIGINT\n\
 \n\
 echo "✅ Both services started successfully"\n\
-echo "   Frontend: http://localhost:${FRONTEND_PORT:-3004}"\n\
-echo "   Backend API: http://localhost:${PORT:-3005}"\n\
+echo "   Frontend: http://localhost:${FRONTEND_PORT:-3000}"\n\
+echo "   Backend API: http://localhost:${PORT:-3001}"\n\
 \n\
 # Wait for both processes\n\
 wait $BACKEND_PID $FRONTEND_PID\n' > start.sh
@@ -137,15 +137,15 @@ RUN npm install -g serve
 
 # Health check for both frontend and backend
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:3004 >/dev/null 2>&1 && \
-        curl -f http://localhost:3005/health >/dev/null 2>&1 || exit 1
+    CMD curl -f http://localhost:3000 >/dev/null 2>&1 && \
+        curl -f http://localhost:3001/health >/dev/null 2>&1 || exit 1
 
 # Change ownership to non-root user
 RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose ports
-EXPOSE 3004 3005
+EXPOSE 3000 3001
 
 # Start both services
 CMD ["./start.sh"]

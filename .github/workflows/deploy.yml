@@ -155,22 +155,7 @@ jobs:
           REACT_APP_API_URL="http://35.209.56.146"
         fi
         
-        # Update Dockerfile ports to 3004/3005 (if not already done)
-        echo "🔧 Updating Dockerfile ports..."
-        if grep -q "EXPOSE 3000 3001" Dockerfile; then
-          echo "Updating EXPOSE ports..."
-          sed -i 's/EXPOSE 3000 3001/EXPOSE 3004 3005/' Dockerfile
-        fi
-        if grep -q ":3000" Dockerfile; then
-          echo "Updating port 3000 references..."
-          sed -i 's/:3000/:3004/g' Dockerfile
-        fi
-        if grep -q ":3001" Dockerfile; then
-          echo "Updating port 3001 references..."
-          sed -i 's/:3001/:3005/g' Dockerfile
-        fi
-        echo "✅ Dockerfile updated"
-        
+        # Dockerfile already configured with correct ports (3000/3001)
         echo "🔍 Dockerfile port configuration:"
         grep -E "(EXPOSE|:300[0-9])" Dockerfile || echo "No port references found"
         
@@ -439,8 +424,8 @@ jobs:
           echo "⏳ Waiting for services to be healthy..."
           sleep 15
           
-          # Use lowercase container name
-          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          # Use consistent container name (matches Caddyfile expectations)
+          CONTAINER_NAME="nine-tones-app"
           
           echo "📊 Container status:"
           docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Health}}\t{{.Ports}}"
@@ -488,8 +473,8 @@ jobs:
           curl -f -m 10 http://${{ vars.VM_HOST }}/ && echo "✅ External frontend OK" || echo "❌ External frontend FAIL"
           curl -f -m 10 http://${{ vars.VM_HOST }}/api/health && echo "✅ External API OK" || echo "❌ External API FAIL"
           
-          # Use lowercase container name for logs  
-          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          # Use consistent container name (matches Caddyfile expectations)
+          CONTAINER_NAME="nine-tones-app"
           
           echo "📋 Application logs (last 30 lines):"
           docker logs $CONTAINER_NAME --tail 30
@@ -534,8 +519,8 @@ jobs:
           echo "🔧 Reloading Caddy..."
           docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile
           
-          # Use lowercase container name for rollback  
-          CONTAINER_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          # Use consistent container name (matches Caddyfile expectations)
+          CONTAINER_NAME="nine-tones-app"
           
           echo "📊 Rollback status:"
           docker ps --filter "name=$CONTAINER_NAME"
