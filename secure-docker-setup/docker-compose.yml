@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   nine-tones-app:
     image: us-central1-docker.pkg.dev/nine-tones-bots-2025-468320/tasty-ar/tasty_erp:latest
