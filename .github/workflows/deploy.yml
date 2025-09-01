@@ -328,9 +328,21 @@ jobs:
           # Fetch environment variables from Secret Manager and save to .env
           gcloud secrets versions access latest \
             --secret="$APP_NAME-env" \
-            --project="$PROJECT_ID" > /opt/$APP_NAME/.env
+            --project="$PROJECT_ID" > /tmp/raw_env
           
-          echo "✅ .env file created successfully"
+          echo "🔧 Cleaning .env file format..."
+          # Clean the .env file: remove empty lines, comments, and fix formatting
+          grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /tmp/raw_env > /opt/$APP_NAME/.env || {
+            echo "❌ No valid environment variables found!"
+            echo "🔍 Raw content from Secret Manager:"
+            cat /tmp/raw_env
+            exit 1
+          }
+          
+          # Clean up temp file
+          rm -f /tmp/raw_env
+          
+          echo "✅ .env file created and cleaned successfully"
           echo "📊 Environment variables count: $(wc -l < /opt/$APP_NAME/.env)"
           echo "🔍 First few lines (sanitized):"
           head -5 /opt/$APP_NAME/.env | sed 's/=.*/=***/' || true
