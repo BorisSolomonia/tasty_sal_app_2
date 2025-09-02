@@ -8,8 +8,8 @@ services:
     networks:
       - web
     expose:
-      - "3000"  # Frontend port
-      - "3001"  # Backend API port
+      - "3004"  # Frontend port
+      - "3005"  # Backend API port
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -f http://localhost:3004 && curl -f http://localhost:3005/health"]
       interval: 30s
