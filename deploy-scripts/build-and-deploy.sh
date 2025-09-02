@@ -61,7 +61,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --platform=managed \
     --region=${REGION} \
     --allow-unauthenticated \
-    --port=3000 \
+    --port=3004 \
     --memory=1Gi \
     --cpu=1 \
     --min-instances=1 \

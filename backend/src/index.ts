@@ -21,7 +21,7 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'development' 
-    ? ['http://localhost:3000', 'http://localhost:3001']
+    ? ['http://localhost:3004', 'http://localhost:3005']
     : process.env.FRONTEND_URL || true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -126,7 +126,7 @@ app.use((req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3005;
 
 app.listen(PORT, () => {
   console.log(`✅ 9-tones backend server running on port ${PORT}`);

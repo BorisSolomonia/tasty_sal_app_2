@@ -24,7 +24,7 @@ The `.env` file contains the RS.ge API credentials:
 SOAP_ENDPOINT=https://services.rs.ge/WayBillService/WayBillService.asmx
 SOAP_SU=username:405747492
 SOAP_SP=Password1@
-PORT=3001
+PORT=3005
 NODE_ENV=development
 ```
 
@@ -43,8 +43,7 @@ npm run build
 npm start
 ```
 
-The server will start on `http://localhost:3001`
-
+The server will start on `http://localhost:3005
 ## API Endpoints
 
 ### Health Check

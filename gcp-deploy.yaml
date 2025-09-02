@@ -41,15 +41,15 @@ spec:
         # Port configuration - Cloud Run only uses one port for external traffic
         ports:
         - name: http1                     # Primary port for Cloud Run
-          containerPort: 3000             # Frontend port (Cloud Run routes traffic here)
-        # Note: Port 3001 (backend) is internal-only, accessed by frontend within container
+          containerPort: 3004             # Frontend port (Cloud Run routes traffic here)
+        # Note: Port 3005 (backend) is internal-only, accessed by frontend within container
         
         # Environment variables for application configuration
         env:
         - name: NODE_ENV                  # Set production mode
           value: "production"
         - name: PORT                      # Backend API server port
-          value: "3001"
+          value: "3005"
           
         # Secure credential injection from Google Secret Manager
         # These secrets must be created separately: gcloud secrets create rs-api-config
@@ -84,7 +84,7 @@ spec:
         startupProbe:
           httpGet:
             path: /health                 # Health check endpoint in backend
-            port: 3001                    # Backend port
+            port: 3005                    # Backend port
           initialDelaySeconds: 15         # Wait 15s after container start
           periodSeconds: 5                # Check every 5 seconds
           timeoutSeconds: 3               # 3s timeout per check
@@ -94,7 +94,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /health
-            port: 3001
+            port: 3005
           periodSeconds: 10               # Check every 10 seconds
           timeoutSeconds: 3
           failureThreshold: 3             # Mark unready after 3 failures
@@ -103,7 +103,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 3001
+            port: 3005
           periodSeconds: 30               # Check every 30 seconds (less frequent)
           timeoutSeconds: 5               # Longer timeout for liveness
           failureThreshold: 2             # Restart container after 2 failures

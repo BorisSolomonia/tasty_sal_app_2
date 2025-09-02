@@ -9,7 +9,7 @@ import {
 // Assume: import { toast } from 'react-toastify'; // For toasts (optional)
 // Assume: import ReactJson from 'react-json-view'; // For better JSON view (optional)
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3005';
 
 // Action type constants
 const ACTION_TYPES = {

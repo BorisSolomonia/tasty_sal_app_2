@@ -14,8 +14,8 @@ services:
       - .env  # Fetched from GCP Secret Manager 'myapp-env' during deployment
     
     expose:
-      - "3000"  # Frontend port
-      - "3001"  # Backend API port
+      - "3004"  # Frontend port
+      - "3005"  # Backend API port
     
     networks: [web]
     
@@ -25,7 +25,7 @@ services:
     
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:3004/"]
       interval: 30s
       timeout: 10s
       retries: 3

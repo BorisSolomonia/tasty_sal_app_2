@@ -155,7 +155,7 @@ jobs:
           REACT_APP_API_URL="http://35.209.56.146"
         fi
         
-        # Dockerfile already configured with correct ports (3000/3001)
+        # Dockerfile already configured with correct ports (3004/3005)
         echo "🔍 Dockerfile port configuration:"
         grep -E "(EXPOSE|:300[0-9])" Dockerfile || echo "No port references found"
         
