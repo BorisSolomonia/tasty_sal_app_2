@@ -11,7 +11,7 @@ services:
       - "3000"  # Frontend port
       - "3001"  # Backend API port
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:3000 && curl -f http://localhost:3001/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:3004 && curl -f http://localhost:3005/health"]
       interval: 30s
       timeout: 10s
       retries: 3
