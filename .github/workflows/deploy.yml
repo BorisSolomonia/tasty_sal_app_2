@@ -418,7 +418,18 @@ jobs:
           docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env pull
           
           echo "🔄 Deploying application..."
+          
+          # Force cleanup of existing containers
+          echo "🧹 Cleaning up existing containers..."
           docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env down --remove-orphans || true
+          
+          # Also remove any orphaned containers with the same name
+          docker rm -f nine-tones-app 2>/dev/null || echo "No orphaned nine-tones-app container to remove"
+          
+          # Wait a moment for cleanup to complete
+          sleep 2
+          
+          echo "🚀 Starting new deployment..."
           docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env up -d
           
           echo "⏳ Waiting for services to be healthy..."
@@ -516,7 +527,14 @@ jobs:
           sed -i "s|:${{ github.sha }}|:latest|g" secure-docker-setup/docker-compose.yml
           
           echo "🔄 Rolling back to previous version..."
-          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env down
+          docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env down --remove-orphans || true
+          
+          # Also remove any orphaned containers with the same name
+          docker rm -f nine-tones-app 2>/dev/null || echo "No orphaned nine-tones-app container to remove"
+          
+          # Wait a moment for cleanup to complete
+          sleep 2
+          
           docker compose -f secure-docker-setup/docker-compose.yml --env-file secure-docker-setup/.env up -d
           
           echo "🔧 Reloading Caddy..."
