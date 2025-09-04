@@ -38,7 +38,10 @@
       "Bash(chmod:*)",
       "Bash(docker build:*)",
       "Bash(git push:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(/C:\\Users\\boris\\D_disc_Boris\\BORIS\\stuff\\TASTY\\APP_last\\Tasty_Sales\\tasty_sal_app_2-master\\backend\\dist/**)",
+      "Read(/C:\\Users\\boris\\D_disc_Boris\\BORIS\\stuff\\TASTY\\APP_last\\Tasty_Sales\\tasty_sal_app_2-master\\src/**)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

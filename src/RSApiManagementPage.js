@@ -9,7 +9,11 @@ import {
 // Assume: import { toast } from 'react-toastify'; // For toasts (optional)
 // Assume: import ReactJson from 'react-json-view'; // For better JSON view (optional)
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3005';
+// In production: REACT_APP_API_URL should be base domain (Caddy routes /api/* to backend)
+// In development: Direct connection to backend on localhost:3005
+const API_BASE_URL = process.env.REACT_APP_API_URL 
+  ? process.env.REACT_APP_API_URL 
+  : (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3005');
 
 // Action type constants
 const ACTION_TYPES = {

@@ -19,7 +19,11 @@ import { extractWaybillsFromResponse, parseAmount } from './utils/rsWaybills';
  */
 
 // ==================== CONSTANTS & UTILITIES ====================
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3005';
+// In production: REACT_APP_API_URL should be base domain (Caddy routes /api/* to backend)
+// In development: Direct connection to backend on localhost:3005
+const API_BASE_URL = process.env.REACT_APP_API_URL 
+  ? process.env.REACT_APP_API_URL 
+  : (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3005');
 
 // Waybills cutoff stays 2025-04-30 (your original behavior)
 const CUTOFF_DATE = '2025-04-30';
