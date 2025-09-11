@@ -15,7 +15,7 @@ import { extractWaybillsFromResponse, parseAmount } from './utils/rsWaybills';
  * - ✅ Adds FAST uniqueCode for payments: date(A) | amount(E cents) | customer(L) | balance(F cents).
  * - ✅ New: Preload a Firebase "unique code" index for every existing payment (read field or reconstruct).
  * - ✅ De-dup is O(1) using Set from Firebase + local remembered codes during the current import session.
- * - ✅ Payment inclusion window starts 2025-04-29 (per requirement). Waybills still use 2025-04-30.
+ * - ✅ Payment inclusion window starts 2025-04-30 (per requirement). Waybills also use 2025-04-30.
  */
 
 // ==================== CONSTANTS & UTILITIES ====================
@@ -27,8 +27,8 @@ const API_BASE_URL = process.env.REACT_APP_API_URL
 
 // Waybills cutoff stays 2025-04-30 (your original behavior)
 const CUTOFF_DATE = '2025-04-30';
-// Payments must include 2025-04-29 and 2025-04-30
-const PAYMENT_WINDOW_START = '2025-04-29';
+// Payments must include 2025-04-30 and after (include April 30th, exclude before)
+const PAYMENT_WINDOW_START = '2025-04-30';
 
 const MAX_DATE_RANGE_MONTHS = 12;
 const DEBOUNCE_DELAY = 500;
@@ -865,7 +865,7 @@ const CustomerAnalysisPage = () => {
 
     const beforeWindow = parsedData.filter(p => !p.isAfterCutoff).length;
     const msg = beforeWindow > 0
-      ? `✅ ${parsedData.length} გადახდა დამუშავდა. ⚠️ ${beforeWindow} ${PAYMENT_WINDOW_START}-მდეა.`
+      ? `✅ ${parsedData.length} გადახდა დამუშავდა. ⚠️ ${beforeWindow} ${PAYMENT_WINDOW_START}-მდე ისტორიულია.`
       : `✅ ${parsedData.length} გადახდა დამუშავდა.`;
     setProgress(msg);
 
