@@ -343,10 +343,11 @@ const CustomerAnalysisPage = () => {
     return new Date(dateString) >= new Date(CUTOFF_DATE);
   }, []);
 
-  // PAYMENTS include 2025-04-29 and after
+  // PAYMENTS include 2025-04-30 and after
   const isInPaymentWindow = useCallback((dateString) => {
     if (!dateString) return false;
-    return new Date(dateString) >= new Date(PAYMENT_WINDOW_START);
+    // Compare date strings directly to avoid timezone issues
+    return dateString >= PAYMENT_WINDOW_START;
   }, []);
 
   // ==================== UNIQUE CODE HELPERS (Payments) ====================
