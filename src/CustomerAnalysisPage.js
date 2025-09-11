@@ -177,7 +177,7 @@ const INITIAL_CUSTOMER_DEBTS = {
 
 // ==================== MAIN COMPONENT ====================
 const CustomerAnalysisPage = () => {
-  const { payments: firebasePayments = [], customers: firebaseCustomers = [], addPayment, deleteDocument } = useData();
+  const { payments: firebasePayments = [], customers: firebaseCustomers = [], manualCashPayments: firebaseManualCashPayments = [], addPayment, deleteDocument, addManualCashPayment, updateManualCashPayment } = useData();
 
   // ==================== STATE MANAGEMENT ====================
   const [dateRange, setDateRange] = useState({
@@ -1098,7 +1098,7 @@ const CustomerAnalysisPage = () => {
       });
     }
 
-    // Cash payments (also use PAYMENT window)
+    // Cash payments from local state (also use PAYMENT window)
     Object.entries(cashPayments).forEach(([paymentId, payment]) => {
       if (!payment.customerId || !payment.amount) return;
       if (!isInPaymentWindow(payment.date)) return;
@@ -1122,6 +1122,43 @@ const CustomerAnalysisPage = () => {
         isAfterCutoff: true,
         source: 'cash',
         paymentId
+      });
+    });
+
+    // Firebase manual cash payments (also use PAYMENT window)
+    firebaseManualCashPayments.forEach(payment => {
+      if (!payment.customerId || !payment.amount) return;
+      
+      const paymentDate = payment.paymentDate;
+      if (!paymentDate) return;
+      
+      const dObj = paymentDate.toDate ? paymentDate.toDate() : new Date(paymentDate);
+      const y = dObj.getUTCFullYear();
+      const m = String(dObj.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dObj.getUTCDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+      
+      if (!isInPaymentWindow(dateStr)) return;
+
+      if (!customerPayments.has(payment.customerId)) {
+        customerPayments.set(payment.customerId, {
+          totalPayments: 0,
+          paymentCount: 0,
+          payments: []
+        });
+      }
+
+      const c = customerPayments.get(payment.customerId);
+      const amt = parseFloat(payment.amount) || 0;
+      c.totalPayments += amt;
+      c.paymentCount += 1;
+      c.payments.push({
+        customerId: payment.customerId,
+        payment: amt,
+        date: dateStr,
+        isAfterCutoff: true,
+        source: 'manual_cash',
+        paymentId: payment.id
       });
     });
 
@@ -1165,7 +1202,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, dateRange, isInPaymentWindow]);
+  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, firebaseManualCashPayments, getCustomerName, dateRange, isInPaymentWindow]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
@@ -1216,7 +1253,7 @@ const CustomerAnalysisPage = () => {
   }, []);
 
   // ==================== CASH PAYMENT MANAGEMENT ====================
-  const addCashPayment = useCallback((customerId, amount, date) => {
+  const addCashPayment = useCallback(async (customerId, amount, date) => {
     if (!customerId?.trim()) { setError('გთხოვთ, შეიყვანოთ მომხმარებლის ID'); return false; }
 
     const numericAmount = parseFloat(amount);
@@ -1224,39 +1261,86 @@ const CustomerAnalysisPage = () => {
 
     if (!date) { setError('გთხოვთ, შეარჩიოთ თარიღი'); return false; }
 
-    const paymentId = `cash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newPayment = { customerId: customerId.trim(), amount: numericAmount, date, createdAt: new Date().toISOString() };
+    try {
+      const newPayment = { 
+        customerId: customerId.trim(), 
+        amount: numericAmount, 
+        paymentDate: date,
+        createdAt: new Date().toISOString(),
+        customerName: getCustomerName(customerId.trim())
+      };
 
-    setCashPayments(prev => ({ ...prev, [paymentId]: newPayment }));
-    setError('');
-    return true;
-  }, []);
+      // Save to Firebase
+      await addManualCashPayment(newPayment);
 
-  const updateCashPayment = useCallback((paymentId, amount) => {
+      // Also keep local state for backward compatibility
+      const paymentId = `cash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setCashPayments(prev => ({ ...prev, [paymentId]: { ...newPayment, date } }));
+      
+      setError('');
+      return true;
+    } catch (error) {
+      console.error('Error saving manual cash payment to Firebase:', error);
+      setError('გადახდის შენახვის შეცდომა');
+      return false;
+    }
+  }, [addManualCashPayment, getCustomerName]);
+
+  const updateCashPayment = useCallback(async (paymentId, amount) => {
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) { setError('გთხოვთ, შეიყვანოთ სწორი თანხა'); return; }
 
-    setCashPayments(prev => ({
-      ...prev,
-      [paymentId]: { ...prev[paymentId], amount: numericAmount }
-    }));
-    setEditingCashPayment(null);
-    setCashPaymentValue('');
-    setError('');
-  }, []);
+    try {
+      // Check if this is a Firebase document (has 'id' property) or local state
+      const firebasePayment = firebaseManualCashPayments.find(p => p.id === paymentId);
+      
+      if (firebasePayment) {
+        // Update Firebase document
+        await updateManualCashPayment(paymentId, { amount: numericAmount });
+      } else {
+        // Update local state for backward compatibility
+        setCashPayments(prev => ({
+          ...prev,
+          [paymentId]: { ...prev[paymentId], amount: numericAmount }
+        }));
+      }
 
-  const deleteCashPayment = useCallback((paymentId) => {
+      setEditingCashPayment(null);
+      setCashPaymentValue('');
+      setError('');
+    } catch (error) {
+      console.error('Error updating manual cash payment:', error);
+      setError('გადახდის განახლების შეცდომა');
+    }
+  }, [updateManualCashPayment, firebaseManualCashPayments]);
+
+  const deleteCashPayment = useCallback(async (paymentId) => {
     if (!window.confirm('ნამდვილად გსურთ ნაღდი გადახდის წაშლა?')) return;
-    setCashPayments(prev => {
-      const updated = { ...prev };
-      delete updated[paymentId];
-      return updated;
-    });
-  }, []);
+    
+    try {
+      // Check if this is a Firebase document or local state
+      const firebasePayment = firebaseManualCashPayments.find(p => p.id === paymentId);
+      
+      if (firebasePayment) {
+        // Delete from Firebase
+        await deleteDocument('manualCashPayments', paymentId);
+      } else {
+        // Delete from local state for backward compatibility
+        setCashPayments(prev => {
+          const updated = { ...prev };
+          delete updated[paymentId];
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting manual cash payment:', error);
+      setError('გადახდის წაშლის შეცდომა');
+    }
+  }, [firebaseManualCashPayments, deleteDocument]);
 
-  const handleCashPaymentSubmit = useCallback((e) => {
+  const handleCashPaymentSubmit = useCallback(async (e) => {
     e.preventDefault();
-    const success = addCashPayment(newCashPayment.customerId, newCashPayment.amount, newCashPayment.date);
+    const success = await addCashPayment(newCashPayment.customerId, newCashPayment.amount, newCashPayment.date);
     if (success) {
       setNewCashPayment({ customerId: '', amount: '', date: '' });
       setShowCashPaymentForm(false);
@@ -1751,24 +1835,44 @@ const CustomerAnalysisPage = () => {
           )}
 
           {/* Cash Payments List */}
-          {Object.keys(cashPayments).length > 0 && (
+          {(Object.keys(cashPayments).length > 0 || firebaseManualCashPayments.length > 0) && (
             <div>
               <h4 className="font-medium text-gray-700 mb-3">
-                ნაღდი გადახდები ({Object.keys(cashPayments).length})
+                ნაღდი გადახდები ({Object.keys(cashPayments).length + firebaseManualCashPayments.length})
               </h4>
               <div className="space-y-2 max-h-60 overflow-y-auto">
-                {Object.entries(cashPayments)
-                  .sort(([, a], [, b]) => new Date(b.date) - new Date(a.date))
-                  .map(([paymentId, payment]) => (
-                    <div key={paymentId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                {[
+                  // Firebase payments first
+                  ...firebaseManualCashPayments.map(payment => ({
+                    id: payment.id,
+                    customerId: payment.customerId,
+                    amount: payment.amount,
+                    date: payment.paymentDate?.toDate ? payment.paymentDate.toDate() : new Date(payment.paymentDate),
+                    source: 'firebase'
+                  })),
+                  // Local state payments second
+                  ...Object.entries(cashPayments).map(([paymentId, payment]) => ({
+                    id: paymentId,
+                    customerId: payment.customerId,
+                    amount: payment.amount,
+                    date: new Date(payment.date),
+                    source: 'local'
+                  }))
+                ]
+                  .sort((a, b) => new Date(b.date) - new Date(a.date))
+                  .map((payment) => (
+                    <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex-1">
                         <div className="text-sm font-medium text-gray-900">
                           {getCustomerName(payment.customerId)} ({payment.customerId})
                         </div>
-                        <div className="text-xs text-gray-500">{payment.date}</div>
+                        <div className="text-xs text-gray-500">
+                          {payment.date instanceof Date ? payment.date.toISOString().split('T')[0] : payment.date}
+                          {payment.source === 'firebase' && <span className="ml-2 text-blue-600">(Firebase)</span>}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {editingCashPayment === paymentId ? (
+                        {editingCashPayment === payment.id ? (
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
@@ -1779,7 +1883,7 @@ const CustomerAnalysisPage = () => {
                               className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
                             />
                             <button
-                              onClick={() => updateCashPayment(paymentId, cashPaymentValue)}
+                              onClick={() => updateCashPayment(payment.id, cashPaymentValue)}
                               className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                             >
                               შენახვა
@@ -1799,7 +1903,7 @@ const CustomerAnalysisPage = () => {
                             <span className="font-medium text-green-600">₾{Number(payment.amount).toFixed(2)}</span>
                             <button
                               onClick={() => {
-                                setEditingCashPayment(paymentId);
+                                setEditingCashPayment(payment.id);
                                 setCashPaymentValue(String(payment.amount));
                               }}
                               className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
@@ -1807,7 +1911,7 @@ const CustomerAnalysisPage = () => {
                               შეცვლა
                             </button>
                             <button
-                              onClick={() => deleteCashPayment(paymentId)}
+                              onClick={() => deleteCashPayment(payment.id)}
                               className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
                             >
                               წაშლა

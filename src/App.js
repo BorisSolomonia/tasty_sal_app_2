@@ -107,10 +107,11 @@ const DataProvider = ({ children }) => {
     const [customers, setCustomers] = useState([]);
     const [orders, setOrders] = useState([]);
     const [payments, setPayments] = useState([]);
+    const [manualCashPayments, setManualCashPayments] = useState([]);
 
     useEffect(() => {
         if (!user) {
-            setUsers([]); setProducts([]); setCustomers([]); setOrders([]); setPayments([]);
+            setUsers([]); setProducts([]); setCustomers([]); setOrders([]); setPayments([]); setManualCashPayments([]);
             return;
         }
         const unsubscribers = [
@@ -119,6 +120,7 @@ const DataProvider = ({ children }) => {
             onSnapshot(collection(db, "customers"), snapshot => setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
             onSnapshot(query(collection(db, "orders")), snapshot => setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), OrderDate: doc.data().OrderDate?.toDate(), EditedTimestamp: doc.data().EditedTimestamp?.toDate() })))),
             onSnapshot(collection(db, "payments"), snapshot => setPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), paymentDate: doc.data().paymentDate?.toDate() })))),
+            onSnapshot(collection(db, "manualCashPayments"), snapshot => setManualCashPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), paymentDate: doc.data().paymentDate?.toDate() })))),
         ];
         return () => unsubscribers.forEach(unsub => unsub());
     }, [user]);
@@ -140,8 +142,10 @@ const DataProvider = ({ children }) => {
     const updateOrder = (orderId, data) => updateDoc(doc(db, "orders", orderId), data);
     const updateMultipleOrderFields = (updates) => Promise.all(updates.map(({ orderId, fields }) => updateDoc(doc(db, "orders", orderId), fields)));
     const addPayment = (payment) => addDocToCollection("payments", { ...payment, paymentDate: Timestamp.fromDate(new Date(payment.paymentDate)) });
+    const addManualCashPayment = (cashPayment) => addDocToCollection("manualCashPayments", { ...cashPayment, paymentDate: Timestamp.fromDate(new Date(cashPayment.paymentDate)) });
+    const updateManualCashPayment = (paymentId, data) => updateDoc(doc(db, "manualCashPayments", paymentId), data);
 
-    const value = { users, products, customers, orders, payments, deleteDocument, addProduct, addCustomer, addBulkOrders, addOrder, updateOrder, updateMultipleOrderFields, addPayment };
+    const value = { users, products, customers, orders, payments, manualCashPayments, deleteDocument, addProduct, addCustomer, addBulkOrders, addOrder, updateOrder, updateMultipleOrderFields, addPayment, addManualCashPayment, updateManualCashPayment };
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
 export const useData = () => useContext(DataContext);
