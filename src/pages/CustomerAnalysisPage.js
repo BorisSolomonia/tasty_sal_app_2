@@ -15,7 +15,7 @@ import { extractWaybillsFromResponse, parseAmount } from './utils/rsWaybills';
  * - ✅ Adds FAST uniqueCode for payments: date(A) | amount(E cents) | customer(L) | balance(F cents).
  * - ✅ New: Preload a Firebase "unique code" index for every existing payment (read field or reconstruct).
  * - ✅ De-dup is O(1) using Set from Firebase + local remembered codes during the current import session.
- * - ✅ Payment inclusion window starts 2025-04-30 (per requirement). Waybills also use 2025-04-30.
+ * - ✅ Payment inclusion after 2025-04-29 (per requirement: include April 30th onwards). Waybills use 2025-04-30.
  */
 
 // ==================== CONSTANTS & UTILITIES ====================
@@ -27,8 +27,8 @@ const API_BASE_URL = process.env.REACT_APP_API_URL
 
 // Waybills cutoff stays 2025-04-30 (your original behavior)
 const CUTOFF_DATE = '2025-04-30';
-// Payments must include 2025-04-30 and after (include April 30th, exclude before)
-const PAYMENT_WINDOW_START = '2025-04-30';
+// Payments must include after 2025-04-29 (include April 30th and after, exclude April 29th and before)
+const PAYMENT_CUTOFF_DATE = '2025-04-29';
 
 const MAX_DATE_RANGE_MONTHS = 12;
 const DEBOUNCE_DELAY = 500;
@@ -343,11 +343,11 @@ const CustomerAnalysisPage = () => {
     return new Date(dateString) >= new Date(CUTOFF_DATE);
   }, []);
 
-  // PAYMENTS include 2025-04-30 and after
+  // PAYMENTS include after 2025-04-29 (April 30th and after)
   const isInPaymentWindow = useCallback((dateString) => {
     if (!dateString) return false;
-    // Compare date strings directly to avoid timezone issues
-    return dateString >= PAYMENT_WINDOW_START;
+    // Compare date strings directly: after April 29th means April 30th onwards
+    return dateString > PAYMENT_CUTOFF_DATE;
   }, []);
 
   // ==================== UNIQUE CODE HELPERS (Payments) ====================
@@ -866,7 +866,7 @@ const CustomerAnalysisPage = () => {
 
     const beforeWindow = parsedData.filter(p => !p.isAfterCutoff).length;
     const msg = beforeWindow > 0
-      ? `✅ ${parsedData.length} გადახდა დამუშავდა. ⚠️ ${beforeWindow} ${PAYMENT_WINDOW_START}-მდე ისტორიულია.`
+      ? `✅ ${parsedData.length} გადახდა დამუშავდა. ⚠️ ${beforeWindow} ${PAYMENT_CUTOFF_DATE}-მდე ისტორიულია.`
       : `✅ ${parsedData.length} გადახდა დამუშავდა.`;
     setProgress(msg);
 
