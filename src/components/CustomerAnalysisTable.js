@@ -359,7 +359,6 @@ export default function CustomerAnalysisTable({
                                 </div>
                               );
                             })}
-                        </div>
                           
                           <div className="mt-4 p-3 bg-blue-50 rounded border">
                             <div className="flex justify-between items-center text-sm">
