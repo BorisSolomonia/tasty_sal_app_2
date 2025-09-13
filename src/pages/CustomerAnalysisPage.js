@@ -760,12 +760,15 @@ const CustomerAnalysisPage = () => {
   // ==================== EXCEL PROCESSING (BANK) ====================
   const validateExcelVsAppPayments = useCallback((excelData, bank) => {
     const results = {
-      excelTotal: 0,
+      excelTotal: 0,           // Sum of payment window payments only
+      excelTotalAll: 0,        // Sum of ALL Column E payments
+      analyzedTotal: 0,        // Sum of payments that will be analyzed  
       appTotal: 0,
       transactionDetails: [],
       skippedTransactions: [],
       duplicateTransactions: [],
-      addedTransactions: []
+      addedTransactions: [],
+      validationMismatch: false
     };
 
     // Column indices
@@ -788,6 +791,12 @@ const CustomerAnalysisPage = () => {
       // Parse amount / balance
       const amount = toNumber(amountRaw);
       const balance = toNumber(balanceRaw);
+      
+      // Track ALL Column E amounts (for validation)
+      if (amount > 0) {
+        results.excelTotalAll += amount;
+      }
+      
       if (amount <= 0) {
         results.skippedTransactions.push({
           rowIndex: rowIndex + 1,
@@ -852,6 +861,7 @@ const CustomerAnalysisPage = () => {
         });
       } else if (inPaymentWindow) {
         results.addedTransactions.push(paymentRecord);
+        results.analyzedTotal += amount; // Track payments that will be analyzed
       }
 
       results.transactionDetails.push({
@@ -875,6 +885,17 @@ const CustomerAnalysisPage = () => {
 
         if (isInPaymentWindow(dateStr)) results.appTotal += Number(p.amount);
       });
+    }
+
+    // CRITICAL VALIDATION: Excel Column E total vs Analyzed payments total
+    const tolerance = 0.01; // Allow small rounding differences
+    const difference = Math.abs(results.excelTotalAll - results.analyzedTotal);
+    results.validationMismatch = difference > tolerance;
+    
+    if (results.validationMismatch) {
+      console.error(`🚨 VALIDATION FAILED: Excel total (₾${results.excelTotalAll.toFixed(2)}) ≠ Analyzed total (₾${results.analyzedTotal.toFixed(2)}). Difference: ₾${difference.toFixed(2)}`);
+    } else {
+      console.log(`✅ VALIDATION PASSED: Excel total (₾${results.excelTotalAll.toFixed(2)}) = Analyzed total (₾${results.analyzedTotal.toFixed(2)})`);
     }
 
     return results;
@@ -941,10 +962,9 @@ const CustomerAnalysisPage = () => {
         parsedData.push(rec);
 
         if (include) {
-          // Save sequentially to control write pressure; dedup safe via `codes` Set
+          // Save ONLY to Firebase - single source of truth
           // eslint-disable-next-line no-await-in-loop
           await saveBankPaymentToFirebase(rec);
-          rememberPayment(rec);
         }
         codes.add(code);
       }

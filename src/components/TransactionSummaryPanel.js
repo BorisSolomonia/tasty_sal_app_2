@@ -12,6 +12,8 @@ export default function TransactionSummaryPanel({ transactionSummary }) {
   const {
     excelTotal,
     excelTotalAll = 0,
+    analyzedTotal = 0,
+    validationMismatch = false,
     appTotal,
     transactionDetails,
     skippedTransactions,
@@ -55,6 +57,28 @@ export default function TransactionSummaryPanel({ transactionSummary }) {
               </p>
               <p className="text-red-600 text-xs mt-1">
                 განსხვავება: ₾{accountingValidation.difference.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Excel vs Analyzed Validation Alert */}
+      {validationMismatch && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+          <div className="flex items-center">
+            <span className="text-orange-500 text-xl mr-3">⚠️</span>
+            <div>
+              <h4 className="text-orange-800 font-medium">Excel-ის და ანალიზის ჯამების შეუსაბამობა!</h4>
+              <p className="text-orange-700 text-sm mt-1">
+                Excel-ის სრული ჯამი (₾{excelTotalAll.toFixed(2)}) არ ემთხვევა 
+                ანალიზირებული გადახდების ჯამს (₾{analyzedTotal.toFixed(2)})
+              </p>
+              <p className="text-orange-600 text-xs mt-1">
+                განსხვავება: ₾{Math.abs(excelTotalAll - analyzedTotal).toFixed(2)}
+              </p>
+              <p className="text-orange-600 text-xs mt-1">
+                შეამოწმეთ Excel ფაილის სისწორე და თარიღების ფილტრები
               </p>
             </div>
           </div>
