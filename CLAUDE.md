@@ -58,17 +58,17 @@ This is a full-stack sales management application with the following structure:
 ### Customer Analysis Advanced Logic (CustomerAnalysisPage.js)
 This component implements sophisticated business rules for customer debt analysis:
 
-#### Cutoff Date Logic (2025-04-29)
+#### Cutoff Date Logic (After 2025-04-29)
 - **Waybill Filtering**: Displays waybills within selected date range on page
-- **Debt Calculation**: Uses ONLY active waybills after cutoff date (2025-04-29) for debt calculation
-- **Payment Processing**: All bank payments after cutoff date are automatically saved to Firebase
+- **Debt Calculation**: Uses ONLY active waybills after cutoff date (after 2025-04-29, so April 30th onwards) for debt calculation
+- **Payment Processing**: All bank payments after cutoff date (after 2025-04-29, so April 30th onwards) are automatically saved to Firebase
 - **Data Separation**: Display logic (date range) is separate from debt calculation logic (after cutoff)
 
 #### Bank Statement Processing
 - **Optimization**: Checks payment amount (Column E) first - skips entire row if amount ≤ 0
 - **Column Mapping**: Customer ID from Column L (11), Payment from Column E (4)
 - **Dual Bank Support**: TBC (bottom-up processing) and BOG (top-down processing)
-- **Automatic Firebase Save**: All payments after 2025-04-29 are saved to Firebase asynchronously
+- **Automatic Firebase Save**: All payments after 2025-04-29 (April 30th onwards) are saved to Firebase asynchronously
 
 #### Context-Aware Duplicate Detection
 Implements sophisticated duplicate detection that considers transaction sequence context:
@@ -97,7 +97,7 @@ const isContextAwareDuplicate = (currentPayment, rowIndex, excelData) => {
 ```
 
 #### Business Rules Summary
-1. **Waybill Count**: Should show exactly 2022 active waybills from 2025-04-29 to current date
+1. **Waybill Count**: Should show exactly 2022 active waybills from 2025-04-30 to current date (after 2025-04-29)
 2. **Payment Detection**: Only processes rows with payment amount > 0 (Column E)
 3. **Context Duplicates**: Same payment different context = different transaction
 4. **Firebase Integration**: Real-time sync with automatic duplicate prevention

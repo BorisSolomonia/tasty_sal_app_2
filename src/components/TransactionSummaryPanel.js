@@ -1,7 +1,7 @@
 // src/components/TransactionSummaryPanel.js
 import React, { useState } from 'react';
 
-const PAYMENT_WINDOW_START = '2025-04-29';
+const PAYMENT_CUTOFF_DATE = '2025-04-29'; // Payments include after this date (April 30th onwards)
 
 export default function TransactionSummaryPanel({ transactionSummary }) {
   const [showDetails, setShowDetails] = useState(false);
@@ -65,7 +65,7 @@ export default function TransactionSummaryPanel({ transactionSummary }) {
         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
           <h4 className="text-sm font-medium text-blue-800">Excel-ის ჯამი</h4>
           <p className="text-xl font-bold text-blue-900 mt-1">₾{excelTotal.toFixed(2)}</p>
-          <p className="text-xs text-blue-600 mt-1">({PAYMENT_WINDOW_START} შემდეგ)</p>
+          <p className="text-xs text-blue-600 mt-1">(30 აპრილი 2025 შემდეგ)</p>
           {excelTotalAll > 0 && (
             <p className="text-xs text-blue-500 mt-1">სულ: ₾{excelTotalAll.toFixed(2)}</p>
           )}

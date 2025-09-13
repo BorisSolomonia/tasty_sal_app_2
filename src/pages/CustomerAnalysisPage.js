@@ -15,7 +15,7 @@ import { extractWaybillsFromResponse, parseAmount } from './utils/rsWaybills';
  * - ✅ Adds FAST uniqueCode for payments: date(A) | amount(E cents) | customer(L) | balance(F cents).
  * - ✅ New: Preload a Firebase "unique code" index for every existing payment (read field or reconstruct).
  * - ✅ De-dup is O(1) using Set from Firebase + local remembered codes during the current import session.
- * - ✅ Payment inclusion after 2025-04-29 (per requirement: include April 30th onwards). Waybills use 2025-04-29.
+ * - ✅ Payment inclusion after 2025-04-29 (per requirement: include April 30th onwards). Waybills also after 2025-04-29.
  */
 
 // ==================== CONSTANTS & UTILITIES ====================
@@ -177,7 +177,7 @@ const INITIAL_CUSTOMER_DEBTS = {
 
 // ==================== MAIN COMPONENT ====================
 const CustomerAnalysisPage = () => {
-  const { payments: firebasePayments = [], customers: firebaseCustomers = [], addPayment, deleteDocument } = useData();
+  const { payments: firebasePayments = [], customers: firebaseCustomers = [], addPayment, addCustomer, deleteDocument } = useData();
 
   // ==================== STATE MANAGEMENT ====================
   const [dateRange, setDateRange] = useState({
@@ -337,10 +337,10 @@ const CustomerAnalysisPage = () => {
     return null;
   }, []);
 
-  // WAYBILLS use CUTOFF_DATE (>= 2025-04-29)
+  // WAYBILLS use CUTOFF_DATE (> 2025-04-29, so April 30th and after)
   const isAfterCutoffDate = useCallback((dateString) => {
     if (!dateString) return false;
-    return new Date(dateString) >= new Date(CUTOFF_DATE);
+    return dateString > CUTOFF_DATE;
   }, []);
 
   // PAYMENTS include after 2025-04-29 (April 30th and after)
@@ -447,6 +447,98 @@ const CustomerAnalysisPage = () => {
   }, [allExistingCodes, buildUniqueCode]);
 
   // ==================== UTILITY FUNCTIONS ====================
+  // SUMIFS logic: Sum payments (E) where customer ID (L) matches and date (A) >= 2025-04-30
+  const calculateCustomerPayments = useCallback((customerId, allPayments) => {
+    if (!customerId) return { totalPayments: 0, paymentCount: 0, payments: [] };
+    
+    const cutoffDate = '2025-04-30';
+    let totalPayments = 0;
+    let paymentCount = 0;
+    const payments = [];
+    
+    // Process remembered payments (from Excel/bank statements)
+    Object.values(rememberedPayments).forEach(payment => {
+      if (payment.customerId === customerId && payment.date >= cutoffDate) {
+        totalPayments += payment.payment || 0;
+        paymentCount += 1;
+        payments.push({
+          customerId,
+          payment: payment.payment || 0,
+          date: payment.date,
+          source: payment.bank || 'excel',
+          uniqueCode: payment.uniqueCode
+        });
+      }
+    });
+    
+    // Process Firebase payments
+    if (allPayments?.length) {
+      allPayments.forEach(payment => {
+        if (payment.supplierName === customerId) {
+          const paymentDate = payment.paymentDate?.toDate ? payment.paymentDate.toDate() : new Date(payment.paymentDate);
+          const dateStr = paymentDate.toISOString().split('T')[0];
+          
+          if (dateStr >= cutoffDate) {
+            totalPayments += Number(payment.amount) || 0;
+            paymentCount += 1;
+            payments.push({
+              customerId,
+              payment: Number(payment.amount) || 0,
+              date: dateStr,
+              source: 'firebase',
+              uniqueCode: payment.uniqueCode || null
+            });
+          }
+        }
+      });
+    }
+    
+    // Process cash payments
+    Object.values(cashPayments).forEach(payment => {
+      if (payment.customerId === customerId && payment.date >= cutoffDate) {
+        totalPayments += parseFloat(payment.amount) || 0;
+        paymentCount += 1;
+        payments.push({
+          customerId,
+          payment: parseFloat(payment.amount) || 0,
+          date: payment.date,
+          source: 'cash'
+        });
+      }
+    });
+    
+    return { totalPayments, paymentCount, payments };
+  }, [rememberedPayments, cashPayments]);
+
+  // Auto-create customer from waybill data
+  const autoCreateCustomer = useCallback(async (customerId, customerName) => {
+    if (!customerId || !customerName || customerId.trim() === '' || customerName.trim() === '') return false;
+    
+    // Skip if customer already exists in Firebase
+    const existingCustomer = firebaseCustomers?.find(c => c.Identification === customerId);
+    if (existingCustomer) return false;
+    
+    // Skip if customer exists in initial debts (they have a name)
+    if (INITIAL_CUSTOMER_DEBTS[customerId]) return false;
+    
+    try {
+      const newCustomer = {
+        CustomerName: customerName.trim(),
+        Identification: customerId.trim(),
+        ContactInfo: `წინასწარი ინფორმაცია არ არის (${new Date().toLocaleDateString('ka-GE')})`
+      };
+      
+      const success = await addCustomer(newCustomer);
+      if (success) {
+        console.log(`✅ Auto-created customer: ${customerName} (${customerId})`);
+        return true;
+      }
+    } catch (error) {
+      console.error(`❌ Failed to auto-create customer ${customerId}:`, error);
+    }
+    return false;
+  }, [firebaseCustomers, addCustomer]);
+
   const getCustomerName = useCallback((customerId) => {
     if (!customerId) return 'უცნობი';
     if (INITIAL_CUSTOMER_DEBTS[customerId]) return INITIAL_CUSTOMER_DEBTS[customerId].name;
@@ -563,12 +655,23 @@ const CustomerAnalysisPage = () => {
       .map(wb => {
         const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
         const isAfterCutoff = isAfterCutoffDate(waybillDate);
+        
+        const customerId = (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim();
+        const customerName = (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim();
+        
+        // Auto-create customer if new customer with valid name is found
+        if (customerId && customerName && isAfterCutoff) {
+          // Non-blocking customer creation - don't await to avoid slowing down waybill processing
+          autoCreateCustomer(customerId, customerName).catch(err => 
+            console.warn(`Failed to auto-create customer ${customerId}:`, err)
+          );
+        }
 
         return {
           ...wb,
           // For sales waybills (get_waybills), the customer is the BUYER (who we sold to)
-          customerId: (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim(),
-          customerName: (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim(),
+          customerId,
+          customerName,
           amount: wb.normalizedAmount || parseAmount(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0),
           date: waybillDate,
           waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
@@ -578,7 +681,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('extract-waybills');
     return processedWaybills;
-  }, [isAfterCutoffDate]);
+  }, [isAfterCutoffDate, autoCreateCustomer]);
 
   const fetchWaybills = useCallback(async () => {
     if (!dateRange.startDate || !dateRange.endDate) {
@@ -937,7 +1040,6 @@ const CustomerAnalysisPage = () => {
 
     const analysis = {};
     const customerSales = new Map();
-    const customerPayments = new Map();
 
     // Waybills (sales) after cutoff
     Object.values(rememberedWaybills).forEach(wb => {
@@ -957,139 +1059,52 @@ const CustomerAnalysisPage = () => {
       customer.waybills.push(wb);
     });
 
-    // Remembered bank/excel payments (we already marked `isAfterCutoff` using payment window)
-    Object.values(rememberedPayments).forEach(payment => {
-      if (!payment.customerId) return;
-      if (!isInPaymentWindow(payment.date)) return;
-
-      if (!customerPayments.has(payment.customerId)) {
-        customerPayments.set(payment.customerId, {
-          totalPayments: 0,
-          paymentCount: 0,
-          payments: []
-        });
-      }
-
-      const c = customerPayments.get(payment.customerId);
-      c.totalPayments += payment.payment;
-      c.paymentCount += 1;
-      c.payments.push(payment);
-    });
-
-    // Firebase payments in UI range + in PAYMENT window
-    if (firebasePayments?.length) {
-      const s = new Date(dateRange.startDate).getTime();
-      const e = new Date(dateRange.endDate).getTime() + 86400000;
-
-      firebasePayments.forEach(p => {
-        if (!p.supplierName) return;
-
-        const pd = p.paymentDate;
-        if (!pd) return;
-
-        const dObj = pd.toDate ? pd.toDate() : new Date(pd);
-        const t = dObj.getTime();
-        if (t < s || t > e) return;
-
-        const y = dObj.getUTCFullYear();
-        const m = String(dObj.getUTCMonth() + 1).padStart(2, '0');
-        const d = String(dObj.getUTCDate()).padStart(2, '0');
-        const dateStr = `${y}-${m}-${d}`;
-        if (!isInPaymentWindow(dateStr)) return;
-
-        const customerId = p.supplierName;
-        const amount = Number(p.amount) || 0;
-
-        if (!customerPayments.has(customerId)) {
-          customerPayments.set(customerId, {
-            totalPayments: 0,
-            paymentCount: 0,
-            payments: []
-          });
-        }
-
-        const c = customerPayments.get(customerId);
-        c.totalPayments += amount;
-        c.paymentCount += 1;
-        c.payments.push({
-          customerId,
-          payment: amount,
-          date: dateStr,
-          isAfterCutoff: true,
-          source: 'firebase',
-          uniqueCode: p.uniqueCode || null
-        });
-      });
-    }
-
-    // Cash payments (also use PAYMENT window)
-    Object.entries(cashPayments).forEach(([paymentId, payment]) => {
-      if (!payment.customerId || !payment.amount) return;
-      if (!isInPaymentWindow(payment.date)) return;
-
-      if (!customerPayments.has(payment.customerId)) {
-        customerPayments.set(payment.customerId, {
-          totalPayments: 0,
-          paymentCount: 0,
-          payments: []
-        });
-      }
-
-      const c = customerPayments.get(payment.customerId);
-      const amt = parseFloat(payment.amount) || 0;
-      c.totalPayments += amt;
-      c.paymentCount += 1;
-      c.payments.push({
-        customerId: payment.customerId,
-        payment: amt,
-        date: payment.date,
-        isAfterCutoff: true,
-        source: 'cash',
-        paymentId
-      });
-    });
-
-    // Combine
+    // Get all unique customer IDs from all sources
     const allIds = new Set([
       ...customerSales.keys(),
-      ...customerPayments.keys(),
-      ...Object.keys(startingDebts)
+      ...Object.keys(startingDebts),
+      // Add customers who have payments but no sales/starting debt
+      ...Object.values(rememberedPayments).map(p => p.customerId).filter(Boolean),
+      ...firebasePayments.map(p => p.supplierName).filter(Boolean),
+      ...Object.values(cashPayments).map(p => p.customerId).filter(Boolean)
     ]);
 
     allIds.forEach(customerId => {
       const sales = customerSales.get(customerId) || {
         totalSales: 0, waybillCount: 0, waybills: []
       };
-      const pays = customerPayments.get(customerId) || {
-        totalPayments: 0, paymentCount: 0, payments: []
-      };
       const sd = startingDebts[customerId] || { amount: 0, date: null };
 
       const customerName = getCustomerName(customerId);
-      const currentDebt = sd.amount + sales.totalSales - pays.totalPayments;
-      const customerCashPayments = pays.payments.filter(p => p.source === 'cash');
+      
+      // Use SUMIFS logic: Sum payments where customer ID matches and date >= 2025-04-30
+      const paymentData = calculateCustomerPayments(customerId, firebasePayments);
+      const currentDebt = sd.amount + sales.totalSales - paymentData.totalPayments;
+      
+      // Calculate cash payments for this customer (>= 2025-04-30)
+      const customerCashPayments = paymentData.payments.filter(p => p.source === 'cash');
       const totalCashPayments = customerCashPayments.reduce((sum, p) => sum + p.payment, 0);
 
       analysis[customerId] = {
         customerId,
         customerName,
         totalSales: sales.totalSales,
-        totalPayments: pays.totalPayments,
+        totalPayments: paymentData.totalPayments,
         totalCashPayments,
         cashPayments: customerCashPayments,
         currentDebt,
         startingDebt: sd.amount,
         startingDebtDate: sd.date,
         waybillCount: sales.waybillCount,
-        paymentCount: pays.paymentCount,
+        paymentCount: paymentData.paymentCount,
         waybills: sales.waybills,
-        payments: pays.payments
+        payments: paymentData.payments
       };
     });
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, dateRange, isInPaymentWindow]);
+  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, calculateCustomerPayments]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
