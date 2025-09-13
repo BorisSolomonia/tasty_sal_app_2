@@ -20,6 +20,7 @@ export default function CustomerAnalysisTable({
   const [sortOrder, setSortOrder] = useState('desc');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [expandedCustomers, setExpandedCustomers] = useState(new Set());
   const itemsPerPage = 50;
 
   const filteredAndSortedCustomers = useMemo(() => {
@@ -60,6 +61,18 @@ export default function CustomerAnalysisTable({
       setSortBy(column);
       setSortOrder('desc');
     }
+  };
+
+  const toggleCustomerDetails = (customerId) => {
+    setExpandedCustomers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(customerId)) {
+        newSet.delete(customerId);
+      } else {
+        newSet.add(customerId);
+      }
+      return newSet;
+    });
   };
 
   return (
@@ -130,6 +143,9 @@ export default function CustomerAnalysisTable({
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 მოქმედება
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                დეტალები
               </th>
             </tr>
           </thead>
@@ -248,7 +264,81 @@ export default function CustomerAnalysisTable({
                     </div>
                   )}
                 </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <button
+                    onClick={() => toggleCustomerDetails(customer.customerId)}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      expandedCustomers.has(customer.customerId)
+                        ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                    title="გადახდების დეტალების ნახვა"
+                  >
+                    {expandedCustomers.has(customer.customerId) ? 'დამალვა' : 'დეტალები'}
+                  </button>
+                </td>
               </tr>
+              
+              {/* Payment Details Row */}
+              {expandedCustomers.has(customer.customerId) && (
+                <tr className="bg-gray-50">
+                  <td colSpan="8" className="px-6 py-4">
+                    <div className="max-h-96 overflow-y-auto">
+                      <h4 className="text-sm font-semibold text-gray-800 mb-3">
+                        {customer.customerName} - გადახდების დეტალები
+                      </h4>
+                      
+                      {customer.payments && customer.payments.length > 0 ? (
+                        <div className="space-y-2">
+                          {customer.payments.map((payment, idx) => (
+                            <div key={idx} className="bg-white rounded p-3 border border-gray-200">
+                              <div className="grid grid-cols-4 gap-4 text-sm">
+                                <div>
+                                  <span className="font-medium text-gray-600">თარიღი:</span>
+                                  <div className="text-gray-900">{payment.date}</div>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-600">თანხა:</span>
+                                  <div className="text-green-600 font-medium">₾{payment.payment.toFixed(2)}</div>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-600">წყარო:</span>
+                                  <div className="text-gray-900">{payment.source || 'Firebase'}</div>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-600">კოდი:</span>
+                                  <div className="text-gray-700 text-xs">{payment.uniqueCode || 'N/A'}</div>
+                                </div>
+                                {payment.description && (
+                                  <div className="col-span-4">
+                                    <span className="font-medium text-gray-600">აღწერა:</span>
+                                    <div className="text-gray-700">{payment.description}</div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          
+                          <div className="mt-4 p-3 bg-blue-50 rounded border">
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="font-medium text-blue-800">სულ გადახდები:</span>
+                              <span className="font-bold text-blue-900">₾{customer.totalPayments.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm mt-1">
+                              <span className="font-medium text-blue-800">გადახდების რაოდენობა:</span>
+                              <span className="text-blue-800">{customer.paymentCount}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-gray-500 text-center py-4">
+                          გადახდები არ არის ნაპოვნი
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
             ))}
           </tbody>
         </table>
