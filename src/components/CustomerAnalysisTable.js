@@ -151,7 +151,8 @@ export default function CustomerAnalysisTable({
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {paginatedCustomers.map((customer) => (
-              <tr key={customer.customerId} className="hover:bg-gray-50">
+              <React.Fragment key={customer.customerId}>
+                <tr className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                   {customer.customerId}
                 </td>
@@ -379,7 +380,7 @@ export default function CustomerAnalysisTable({
                     </div>
                   </td>
                 </tr>
-              )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
