@@ -289,35 +289,76 @@ export default function CustomerAnalysisTable({
                       </h4>
                       
                       {customer.payments && customer.payments.length > 0 ? (
-                        <div className="space-y-2">
-                          {customer.payments.map((payment, idx) => (
-                            <div key={idx} className="bg-white rounded p-3 border border-gray-200">
-                              <div className="grid grid-cols-4 gap-4 text-sm">
-                                <div>
-                                  <span className="font-medium text-gray-600">თარიღი:</span>
-                                  <div className="text-gray-900">{payment.date}</div>
-                                </div>
-                                <div>
-                                  <span className="font-medium text-gray-600">თანხა:</span>
-                                  <div className="text-green-600 font-medium">₾{payment.payment.toFixed(2)}</div>
-                                </div>
-                                <div>
-                                  <span className="font-medium text-gray-600">წყარო:</span>
-                                  <div className="text-gray-900">{payment.source || 'Firebase'}</div>
-                                </div>
-                                <div>
-                                  <span className="font-medium text-gray-600">კოდი:</span>
-                                  <div className="text-gray-700 text-xs">{payment.uniqueCode || 'N/A'}</div>
-                                </div>
-                                {payment.description && (
-                                  <div className="col-span-4">
-                                    <span className="font-medium text-gray-600">აღწერა:</span>
-                                    <div className="text-gray-700">{payment.description}</div>
+                        <div className="space-y-3">
+                          {customer.payments
+                            .sort((a, b) => new Date(b.date) - new Date(a.date)) // Sort by date descending
+                            .map((payment, idx) => {
+                              const isAfterCutoff = payment.date >= '2025-04-30';
+                              const reason = isAfterCutoff 
+                                ? `✅ გადახდა შედის SUMIFS ლოგიკაში (თარიღი >= 2025-04-30)`
+                                : `⚠️ გადახდა არ შედის SUMIFS ლოგიკაში (თარიღი < 2025-04-30)`;
+                              
+                              return (
+                                <div key={idx} className={`rounded-lg p-4 border-2 ${
+                                  isAfterCutoff 
+                                    ? 'bg-green-50 border-green-200' 
+                                    : 'bg-orange-50 border-orange-200'
+                                }`}>
+                                  <div className="grid grid-cols-6 gap-4 text-sm">
+                                    <div>
+                                      <span className="font-medium text-gray-600">თარიღი:</span>
+                                      <div className="text-gray-900 font-medium">{payment.date}</div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">თანხა:</span>
+                                      <div className="text-green-600 font-bold text-base">₾{payment.payment.toFixed(2)}</div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">წყარო:</span>
+                                      <div className="text-gray-900">{payment.source || 'Firebase'}</div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">მიზეზი:</span>
+                                      <div className={isAfterCutoff ? 'text-green-700' : 'text-orange-700'}>
+                                        {reason}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">უნიკალური კოდი:</span>
+                                      <div className="text-gray-700 text-xs font-mono">
+                                        {payment.uniqueCode || 'N/A'}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium text-gray-600">Firebase ID:</span>
+                                      <div className="text-gray-500 text-xs">
+                                        {payment.firebaseId || 'N/A'}
+                                      </div>
+                                    </div>
+                                    {payment.description && (
+                                      <div className="col-span-6 pt-2 border-t border-gray-200">
+                                        <span className="font-medium text-gray-600">აღწერა:</span>
+                                        <div className="text-gray-700 mt-1">{payment.description}</div>
+                                      </div>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                                  
+                                  {/* Debug Info */}
+                                  <div className="mt-3 p-2 bg-gray-100 rounded text-xs">
+                                    <details className="cursor-pointer">
+                                      <summary className="font-medium text-gray-600">🔧 დებაგინგის ინფორმაცია</summary>
+                                      <div className="mt-2 space-y-1">
+                                        <div><strong>Excel Row:</strong> {payment.rowIndex || 'N/A'}</div>
+                                        <div><strong>Upload Date:</strong> {payment.uploadedAt || 'N/A'}</div>
+                                        <div><strong>Raw Balance:</strong> ₾{payment.balance?.toFixed(2) || 'N/A'}</div>
+                                        <div><strong>Bank:</strong> {payment.bank || 'N/A'}</div>
+                                      </div>
+                                    </details>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
                           
                           <div className="mt-4 p-3 bg-blue-50 rounded border">
                             <div className="flex justify-between items-center text-sm">
