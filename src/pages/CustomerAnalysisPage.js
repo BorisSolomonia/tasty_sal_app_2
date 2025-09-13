@@ -448,6 +448,7 @@ const CustomerAnalysisPage = () => {
 
   // ==================== UTILITY FUNCTIONS ====================
   // SUMIFS logic: Sum payments (E) where customer ID (L) matches and date (A) >= 2025-04-30
+  // Use ONLY Firebase payments to avoid double-counting (Excel payments are auto-saved to Firebase)
   const calculateCustomerPayments = useCallback((customerId, allPayments) => {
     if (!customerId) return { totalPayments: 0, paymentCount: 0, payments: [] };
     
@@ -456,22 +457,8 @@ const CustomerAnalysisPage = () => {
     let paymentCount = 0;
     const payments = [];
     
-    // Process remembered payments (from Excel/bank statements)
-    Object.values(rememberedPayments).forEach(payment => {
-      if (payment.customerId === customerId && payment.date >= cutoffDate) {
-        totalPayments += payment.payment || 0;
-        paymentCount += 1;
-        payments.push({
-          customerId,
-          payment: payment.payment || 0,
-          date: payment.date,
-          source: payment.bank || 'excel',
-          uniqueCode: payment.uniqueCode
-        });
-      }
-    });
-    
-    // Process Firebase payments
+    // Process ONLY Firebase payments (single source of truth)
+    // This includes: Excel/bank payments, manual cash payments, all other payments
     if (allPayments?.length) {
       allPayments.forEach(payment => {
         if (payment.supplierName === customerId) {
@@ -485,30 +472,41 @@ const CustomerAnalysisPage = () => {
               customerId,
               payment: Number(payment.amount) || 0,
               date: dateStr,
-              source: 'firebase',
-              uniqueCode: payment.uniqueCode || null
+              source: payment.source || 'firebase',
+              uniqueCode: payment.uniqueCode || null,
+              description: payment.description || ''
             });
           }
         }
       });
     }
     
-    // Process cash payments
-    Object.values(cashPayments).forEach(payment => {
+    // Add local cash payments that haven't been synced to Firebase yet
+    Object.entries(cashPayments).forEach(([paymentId, payment]) => {
       if (payment.customerId === customerId && payment.date >= cutoffDate) {
-        totalPayments += parseFloat(payment.amount) || 0;
-        paymentCount += 1;
-        payments.push({
-          customerId,
-          payment: parseFloat(payment.amount) || 0,
-          date: payment.date,
-          source: 'cash'
-        });
+        // Only add if not already in Firebase (prevent duplicates)
+        const existsInFirebase = allPayments?.some(fp => 
+          fp.supplierName === customerId && 
+          Math.abs(Number(fp.amount) - parseFloat(payment.amount)) < 0.01 &&
+          fp.paymentDate?.toDate().toISOString().split('T')[0] === payment.date
+        );
+        
+        if (!existsInFirebase) {
+          totalPayments += parseFloat(payment.amount) || 0;
+          paymentCount += 1;
+          payments.push({
+            customerId,
+            payment: parseFloat(payment.amount) || 0,
+            date: payment.date,
+            source: 'cash-local',
+            paymentId
+          });
+        }
       }
     });
     
     return { totalPayments, paymentCount, payments };
-  }, [rememberedPayments, cashPayments]);
+  }, [cashPayments]);
 
   // Auto-create customer from waybill data
   const autoCreateCustomer = useCallback(async (customerId, customerName) => {
@@ -1064,7 +1062,6 @@ const CustomerAnalysisPage = () => {
       ...customerSales.keys(),
       ...Object.keys(startingDebts),
       // Add customers who have payments but no sales/starting debt
-      ...Object.values(rememberedPayments).map(p => p.customerId).filter(Boolean),
       ...firebasePayments.map(p => p.supplierName).filter(Boolean),
       ...Object.values(cashPayments).map(p => p.customerId).filter(Boolean)
     ]);
@@ -1104,7 +1101,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, calculateCustomerPayments]);
+  }, [startingDebts, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, calculateCustomerPayments]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
