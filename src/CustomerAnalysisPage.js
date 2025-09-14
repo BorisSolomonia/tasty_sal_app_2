@@ -385,7 +385,39 @@ const CustomerAnalysisPage = () => {
   // WAYBILLS use CUTOFF_DATE (> 2025-04-29, so April 30th and after)
   const isAfterCutoffDate = useCallback((dateString) => {
     if (!dateString) return false;
-    return new Date(dateString) > new Date(CUTOFF_DATE);
+    
+    // COMMENTED OUT OLD LOGIC - CAUSING APRIL 29TH INCLUSION:
+    // return new Date(dateString) > new Date(CUTOFF_DATE);
+    
+    // NEW LOGIC: Normalize date to YYYY-MM-DD format for accurate comparison
+    let normalizedDate;
+    
+    // Handle different date formats from API
+    if (typeof dateString === 'string') {
+      // Try to parse the date string
+      const parsed = new Date(dateString);
+      if (!isNaN(parsed.getTime())) {
+        const y = parsed.getFullYear();
+        const m = String(parsed.getMonth() + 1).padStart(2, '0');
+        const d = String(parsed.getDate()).padStart(2, '0');
+        normalizedDate = `${y}-${m}-${d}`;
+      } else {
+        return false;
+      }
+    } else if (dateString instanceof Date) {
+      const y = dateString.getFullYear();
+      const m = String(dateString.getMonth() + 1).padStart(2, '0');
+      const d = String(dateString.getDate()).padStart(2, '0');
+      normalizedDate = `${y}-${m}-${d}`;
+    } else {
+      return false;
+    }
+    
+    // Debug logging to see what dates are being processed
+    const result = normalizedDate > CUTOFF_DATE;
+    console.log(`🔍 Date check: "${dateString}" → "${normalizedDate}" > "${CUTOFF_DATE}" = ${result}`);
+    
+    return result;
   }, []);
 
   // PAYMENTS include 2025-04-29 and after
@@ -606,18 +638,44 @@ const CustomerAnalysisPage = () => {
       })
       .map(wb => {
         const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
+        
+        // COMMENTED OUT OLD LOGIC:
+        // const isAfterCutoff = isAfterCutoffDate(waybillDate);
+        
+        // NEW LOGIC: More robust date checking with debugging
         const isAfterCutoff = isAfterCutoffDate(waybillDate);
+        
+        // CRITICAL: Normalize the date for consistent storage
+        let normalizedDate;
+        if (waybillDate) {
+          const parsed = new Date(waybillDate);
+          if (!isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const m = String(parsed.getMonth() + 1).padStart(2, '0');
+            const d = String(parsed.getDate()).padStart(2, '0');
+            normalizedDate = `${y}-${m}-${d}`;
+          } else {
+            normalizedDate = waybillDate;
+          }
+        }
 
-        return {
+        const processedWaybill = {
           ...wb,
           // For sales waybills (get_waybills), the customer is the BUYER (who we sold to)
           customerId: (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim(),
           customerName: (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim(),
           amount: wb.normalizedAmount || parseAmount(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0),
-          date: waybillDate,
+          date: normalizedDate, // Store normalized date
           waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
           isAfterCutoff
         };
+        
+        // Debug logging for waybills around the cutoff date
+        if (normalizedDate && (normalizedDate === '2025-04-29' || normalizedDate === '2025-04-30')) {
+          console.log(`🎯 CRITICAL WAYBILL: Date=${normalizedDate}, isAfterCutoff=${isAfterCutoff}, ID=${processedWaybill.waybillId}`);
+        }
+        
+        return processedWaybill;
       });
 
     performanceMonitor.end('extract-waybills');
@@ -674,16 +732,37 @@ const CustomerAnalysisPage = () => {
         return t >= from && t <= to;
       });
 
+      // COMMENTED OUT OLD LOGIC:
       // Remember new after-cutoff waybills
-      const newWaybills = filteredWaybills.filter(wb =>
-        wb.isAfterCutoff && !(wb.waybillId in rememberedWaybills)
-      );
+      // const newWaybills = filteredWaybills.filter(wb =>
+      //   wb.isAfterCutoff && !(wb.waybillId in rememberedWaybills)
+      // );
+      
+      // NEW LOGIC: Enhanced filtering with detailed debugging
+      console.log(`📊 Processing ${filteredWaybills.length} waybills from API response`);
+      
+      const newWaybills = filteredWaybills.filter(wb => {
+        const isNew = !(wb.waybillId in rememberedWaybills);
+        const shouldInclude = wb.isAfterCutoff && isNew;
+        
+        // Debug logging for critical dates
+        if (wb.date === '2025-04-29' || wb.date === '2025-04-30') {
+          console.log(`🚨 CRITICAL DATE FILTER: Date=${wb.date}, isAfterCutoff=${wb.isAfterCutoff}, isNew=${isNew}, shouldInclude=${shouldInclude}, ID=${wb.waybillId}`);
+        }
+        
+        return shouldInclude;
+      });
 
+      console.log(`✅ Found ${newWaybills.length} new waybills to remember (after cutoff filter)`);
+      
       if (newWaybills.length > 0) {
         const next = { ...rememberedWaybills };
         newWaybills.forEach(wb => {
           next[wb.waybillId] = wb;
           updateCustomerBalance(wb.customerId, wb.amount, 0);
+          
+          // Log each waybill being stored
+          console.log(`💾 Storing waybill: Date=${wb.date}, isAfterCutoff=${wb.isAfterCutoff}, ID=${wb.waybillId}, Customer=${wb.customerId}`);
         });
         setRememberedWaybills(next);
       }
@@ -1023,12 +1102,47 @@ const CustomerAnalysisPage = () => {
     const customerSales = new Map();
     const customerPayments = new Map();
 
+    // COMMENTED OUT OLD LOGIC:
     // Waybills (sales) after cutoff - ONLY include waybills after April 29th, 2025
+    // Object.values(rememberedWaybills).forEach(wb => {
+    //   if (!wb.customerId) return;
+    //   
+    //   // CRITICAL: Only include waybills that are after cutoff date (April 30th onwards)
+    //   if (!wb.isAfterCutoff) return;
+    // });
+
+    // NEW LOGIC: Enhanced waybill processing with detailed debugging
+    console.log(`🧮 SALES CALCULATION: Processing ${Object.keys(rememberedWaybills).length} remembered waybills`);
+    
+    let includedCount = 0;
+    let excludedCount = 0;
+    
     Object.values(rememberedWaybills).forEach(wb => {
-      if (!wb.customerId) return;
+      if (!wb.customerId) {
+        excludedCount++;
+        return;
+      }
+      
+      // CRITICAL DEBUG: Log all waybills around cutoff date
+      if (wb.date === '2025-04-29' || wb.date === '2025-04-30') {
+        console.log(`🔥 SALES CALCULATION CHECK: Date=${wb.date}, isAfterCutoff=${wb.isAfterCutoff}, Customer=${wb.customerId}, Amount=${wb.amount}`);
+      }
       
       // CRITICAL: Only include waybills that are after cutoff date (April 30th onwards)
-      if (!wb.isAfterCutoff) return;
+      if (!wb.isAfterCutoff) {
+        if (wb.date === '2025-04-29') {
+          console.log(`❌ EXCLUDING April 29th waybill: Date=${wb.date}, Customer=${wb.customerId}, Amount=${wb.amount}`);
+        }
+        excludedCount++;
+        return;
+      }
+      
+      // Include this waybill in sales
+      includedCount++;
+      
+      if (wb.date === '2025-04-30') {
+        console.log(`✅ INCLUDING April 30th waybill: Date=${wb.date}, Customer=${wb.customerId}, Amount=${wb.amount}`);
+      }
 
       if (!customerSales.has(wb.customerId)) {
         customerSales.set(wb.customerId, {
@@ -1043,6 +1157,8 @@ const CustomerAnalysisPage = () => {
       customer.waybillCount += 1;
       customer.waybills.push(wb);
     });
+    
+    console.log(`📈 SALES CALCULATION SUMMARY: Included=${includedCount}, Excluded=${excludedCount}`);
 
     // Remembered bank/excel payments (we already marked `isAfterCutoff` using payment window)
     Object.values(rememberedPayments).forEach(payment => {
@@ -1699,6 +1815,21 @@ const CustomerAnalysisPage = () => {
               className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors"
             >
               ბანკის გადახდების წაშლა
+            </button>
+
+            <button
+              onClick={() => {
+                console.log('🔍 DEBUG: Current remembered waybills:', Object.keys(rememberedWaybills).length);
+                Object.values(rememberedWaybills).forEach(wb => {
+                  if (wb.date === '2025-04-29' || wb.date === '2025-04-30') {
+                    console.log(`🎯 STORED WAYBILL: Date=${wb.date}, isAfterCutoff=${wb.isAfterCutoff}, Customer=${wb.customerId}, Amount=${wb.amount}, ID=${wb.waybillId}`);
+                  }
+                });
+                setProgress(`🔍 Check console for waybill debug info (${Object.keys(rememberedWaybills).length} total)`);
+              }}
+              className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-sm"
+            >
+              Debug: Check Stored Waybills
             </button>
 
             <button
