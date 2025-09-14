@@ -191,9 +191,17 @@ const CustomerAnalysisPage = () => {
   });
 
   const [waybills, setWaybills] = useState([]);
-  const [rememberedWaybills, setRememberedWaybills] = useState(() =>
-    SafeStorage.get('rememberedWaybills', {})
-  );
+  const [rememberedWaybills, setRememberedWaybills] = useState(() => {
+    const stored = SafeStorage.get('rememberedWaybills', {});
+    // Clean up any waybills from April 29th or before (legacy data)
+    const cleaned = {};
+    Object.entries(stored).forEach(([id, wb]) => {
+      if (wb.isAfterCutoff && wb.date && new Date(wb.date) > new Date('2025-04-29')) {
+        cleaned[id] = wb;
+      }
+    });
+    return cleaned;
+  });
   // NOTE: rememberedPayments will now be keyed by uniqueCode for bank/excel rows
   const [rememberedPayments, setRememberedPayments] = useState(() =>
     SafeStorage.get('rememberedPayments', {})
@@ -374,10 +382,10 @@ const CustomerAnalysisPage = () => {
     return parsedDate && new Date(parsedDate) >= new Date(PAYMENT_WINDOW_START);
   }, [isAfterSerialCutoff]);
 
-  // WAYBILLS use CUTOFF_DATE (>= 2025-04-29)
+  // WAYBILLS use CUTOFF_DATE (> 2025-04-29, so April 30th and after)
   const isAfterCutoffDate = useCallback((dateString) => {
     if (!dateString) return false;
-    return new Date(dateString) >= new Date(CUTOFF_DATE);
+    return new Date(dateString) > new Date(CUTOFF_DATE);
   }, []);
 
   // PAYMENTS include 2025-04-29 and after
@@ -1015,9 +1023,12 @@ const CustomerAnalysisPage = () => {
     const customerSales = new Map();
     const customerPayments = new Map();
 
-    // Waybills (sales) after cutoff
+    // Waybills (sales) after cutoff - ONLY include waybills after April 29th, 2025
     Object.values(rememberedWaybills).forEach(wb => {
       if (!wb.customerId) return;
+      
+      // CRITICAL: Only include waybills that are after cutoff date (April 30th onwards)
+      if (!wb.isAfterCutoff) return;
 
       if (!customerSales.has(wb.customerId)) {
         customerSales.set(wb.customerId, {
