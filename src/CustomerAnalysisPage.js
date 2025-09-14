@@ -1160,26 +1160,11 @@ const CustomerAnalysisPage = () => {
     
     console.log(`📈 SALES CALCULATION SUMMARY: Included=${includedCount}, Excluded=${excludedCount}`);
 
-    // Remembered bank/excel payments (we already marked `isAfterCutoff` using payment window)
-    Object.values(rememberedPayments).forEach(payment => {
-      if (!payment.customerId) return;
-      if (!isInPaymentWindow(payment.date)) return;
-
-      if (!customerPayments.has(payment.customerId)) {
-        customerPayments.set(payment.customerId, {
-          totalPayments: 0,
-          paymentCount: 0,
-          payments: []
-        });
-      }
-
-      const c = customerPayments.get(payment.customerId);
-      c.totalPayments += payment.payment;
-      c.paymentCount += 1;
-      c.payments.push(payment);
-    });
-
-    // Firebase payments in UI range + in PAYMENT window
+    // FIXED: Prevent double-counting of payments from local storage + Firebase
+    const processedPaymentCodes = new Set();
+    
+    // First priority: Firebase payments (permanent source of truth)
+    console.log(`💰 PAYMENT CALCULATION: Processing Firebase payments`);
     if (firebasePayments?.length) {
       const s = new Date(dateRange.startDate).getTime();
       const e = new Date(dateRange.endDate).getTime() + 86400000;
@@ -1202,6 +1187,12 @@ const CustomerAnalysisPage = () => {
 
         const customerId = p.supplierName;
         const amount = Number(p.amount) || 0;
+        const uniqueCode = p.uniqueCode;
+        
+        // Track this payment to prevent double-counting
+        if (uniqueCode) {
+          processedPaymentCodes.add(uniqueCode);
+        }
 
         if (!customerPayments.has(customerId)) {
           customerPayments.set(customerId, {
@@ -1220,10 +1211,47 @@ const CustomerAnalysisPage = () => {
           date: dateStr,
           isAfterCutoff: true,
           source: 'firebase',
-          uniqueCode: p.uniqueCode || null
+          uniqueCode: uniqueCode
         });
+        
+        console.log(`✅ Added Firebase payment: Customer=${customerId}, Amount=${amount}, Code=${uniqueCode}`);
       });
     }
+
+    // Second priority: Local payments (only if not already in Firebase)
+    console.log(`💾 PAYMENT CALCULATION: Processing local payments (deduplication active)`);
+    let localPaymentsSkipped = 0;
+    let localPaymentsAdded = 0;
+    
+    Object.values(rememberedPayments).forEach(payment => {
+      if (!payment.customerId) return;
+      if (!isInPaymentWindow(payment.date)) return;
+      
+      // CRITICAL: Skip if already processed from Firebase
+      if (payment.uniqueCode && processedPaymentCodes.has(payment.uniqueCode)) {
+        localPaymentsSkipped++;
+        console.log(`⚠️ Skipping duplicate local payment: Customer=${payment.customerId}, Amount=${payment.payment}, Code=${payment.uniqueCode} (already in Firebase)`);
+        return;
+      }
+
+      if (!customerPayments.has(payment.customerId)) {
+        customerPayments.set(payment.customerId, {
+          totalPayments: 0,
+          paymentCount: 0,
+          payments: []
+        });
+      }
+
+      const c = customerPayments.get(payment.customerId);
+      c.totalPayments += payment.payment;
+      c.paymentCount += 1;
+      c.payments.push(payment);
+      localPaymentsAdded++;
+      
+      console.log(`✅ Added local payment: Customer=${payment.customerId}, Amount=${payment.payment}, Code=${payment.uniqueCode}`);
+    });
+    
+    console.log(`📊 PAYMENT DEDUPLICATION: Local payments added=${localPaymentsAdded}, skipped=${localPaymentsSkipped}`);
 
     // Cash payments from local state (also use PAYMENT window)
     Object.entries(cashPayments).forEach(([paymentId, payment]) => {
@@ -1829,7 +1857,25 @@ const CustomerAnalysisPage = () => {
               }}
               className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-sm"
             >
-              Debug: Check Stored Waybills
+              Debug: Waybills
+            </button>
+
+            <button
+              onClick={() => {
+                console.log('💰 DEBUG: Payment sources comparison');
+                console.log('Local rememberedPayments:', Object.keys(rememberedPayments).length);
+                console.log('Firebase payments:', firebasePayments.length);
+                
+                Object.values(rememberedPayments).forEach(p => {
+                  const firebaseMatch = firebasePayments.find(fp => fp.uniqueCode === p.uniqueCode);
+                  console.log(`📋 Local payment: Customer=${p.customerId}, Amount=${p.payment}, Code=${p.uniqueCode}, InFirebase=${!!firebaseMatch}`);
+                });
+                
+                setProgress(`🔍 Check console for payment debug info (Local: ${Object.keys(rememberedPayments).length}, Firebase: ${firebasePayments.length})`);
+              }}
+              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm"
+            >
+              Debug: Payments
             </button>
 
             <button
