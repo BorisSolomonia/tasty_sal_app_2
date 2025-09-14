@@ -343,10 +343,37 @@ const CustomerAnalysisPage = () => {
   }, []);
 
   // WAYBILLS use CUTOFF_DATE (> 2025-04-29, so April 30th and after)
-  const isAfterCutoffDate = useCallback((dateString) => {
-    if (!dateString) return false;
-    return dateString > CUTOFF_DATE;
-  }, []);
+  const isAfterCutoffDate = useCallback((dateValue) => {
+    if (!dateValue) return false;
+    
+    // CRITICAL: Normalize date to YYYY-MM-DD format before comparison
+    let normalizedDate;
+    
+    if (typeof dateValue === 'string') {
+      // Handle various string formats
+      if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // Already in YYYY-MM-DD format
+        normalizedDate = dateValue;
+      } else {
+        // Parse other formats using existing parseExcelDate logic
+        normalizedDate = parseExcelDate(dateValue);
+      }
+    } else if (dateValue instanceof Date) {
+      // Handle Date objects
+      const y = dateValue.getUTCFullYear();
+      const m = String(dateValue.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateValue.getUTCDate()).padStart(2, '0');
+      normalizedDate = `${y}-${m}-${d}`;
+    } else {
+      // Try to parse as date
+      normalizedDate = parseExcelDate(dateValue);
+    }
+    
+    if (!normalizedDate) return false;
+    
+    // Now do proper string comparison with normalized YYYY-MM-DD format
+    return normalizedDate > CUTOFF_DATE;
+  }, [parseExcelDate]);
 
   // PAYMENTS include after 2025-04-29 (April 30th and after)
   const isInPaymentWindow = useCallback((dateString) => {
@@ -666,6 +693,21 @@ const CustomerAnalysisPage = () => {
         const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
         const isAfterCutoff = isAfterCutoffDate(waybillDate);
         
+        // CRITICAL: Normalize the date for consistent storage and comparison
+        let normalizedWaybillDate = null;
+        if (waybillDate) {
+          if (typeof waybillDate === 'string' && waybillDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            normalizedWaybillDate = waybillDate;
+          } else if (waybillDate instanceof Date) {
+            const y = waybillDate.getUTCFullYear();
+            const m = String(waybillDate.getUTCMonth() + 1).padStart(2, '0');
+            const d = String(waybillDate.getUTCDate()).padStart(2, '0');
+            normalizedWaybillDate = `${y}-${m}-${d}`;
+          } else {
+            normalizedWaybillDate = parseExcelDate(waybillDate);
+          }
+        }
+        
         const customerId = (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim();
         const customerName = (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim();
         
@@ -683,7 +725,7 @@ const CustomerAnalysisPage = () => {
           customerId,
           customerName,
           amount: wb.normalizedAmount || parseAmount(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0),
-          date: waybillDate,
+          date: normalizedWaybillDate, // Store normalized date in YYYY-MM-DD format
           waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
           isAfterCutoff
         };
@@ -691,7 +733,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('extract-waybills');
     return processedWaybills;
-  }, [isAfterCutoffDate, autoCreateCustomer]);
+  }, [isAfterCutoffDate, autoCreateCustomer, parseExcelDate]);
 
   const fetchWaybills = useCallback(async () => {
     if (!dateRange.startDate || !dateRange.endDate) {
@@ -1431,6 +1473,28 @@ const CustomerAnalysisPage = () => {
     }
   }, [rememberedPayments, rememberedWaybills, firebasePayments, deleteDocument]);
 
+  // Debug function to manually clear April 29th waybills
+  const clearApril29thWaybills = useCallback(() => {
+    const current = { ...rememberedWaybills };
+    let removedCount = 0;
+    
+    Object.entries(current).forEach(([id, wb]) => {
+      const normalizedDate = wb.date || parseExcelDate(wb.CREATE_DATE || wb.create_date || wb.CreateDate);
+      if (normalizedDate === '2025-04-29' || !wb.isAfterCutoff) {
+        delete current[id];
+        removedCount++;
+        console.log(`🗑️ Removed April 29th waybill: ${id}, date: ${normalizedDate}, isAfterCutoff: ${wb.isAfterCutoff}`);
+      }
+    });
+    
+    if (removedCount > 0) {
+      setRememberedWaybills(current);
+      setProgress(`✅ წაშლილია ${removedCount} ძველი ზედდებული (29 აპრილამდე)`);
+    } else {
+      setProgress('✅ ძველი ზედდებულები არ მოიძებნა');
+    }
+  }, [rememberedWaybills, parseExcelDate]);
+
   const clearAll = useCallback(() => {
     if (!window.confirm('ნამდვილად გსურთ ყველა მონაცემის წაშლა?')) return;
 
@@ -1591,6 +1655,14 @@ const CustomerAnalysisPage = () => {
               className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors"
             >
               ბანკის გადახდების წაშლა
+            </button>
+
+            <button
+              onClick={clearApril29thWaybills}
+              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm"
+              title="Debug: Remove any waybills from April 29th that might be cached"
+            >
+              29 აპრილის ზედდებულების წაშლა (Debug)
             </button>
 
             <button
