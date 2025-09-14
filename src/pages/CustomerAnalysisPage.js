@@ -177,7 +177,7 @@ const INITIAL_CUSTOMER_DEBTS = {
 
 // ==================== MAIN COMPONENT ====================
 const CustomerAnalysisPage = () => {
-  const { payments: firebasePayments = [], customers: firebaseCustomers = [], addPayment, addCustomer, deleteDocument } = useData();
+  const { payments: firebasePayments = [], customers: firebaseCustomers = [], manualCashPayments: firebaseManualCashPayments = [], addPayment, addCustomer, deleteDocument, addManualCashPayment, updateManualCashPayment } = useData();
 
   // ==================== STATE MANAGEMENT ====================
   const [dateRange, setDateRange] = useState({
@@ -217,10 +217,7 @@ const CustomerAnalysisPage = () => {
     return stored;
   });
 
-  // Cash payments state
-  const [cashPayments, setCashPayments] = useState(() =>
-    SafeStorage.get('cashPayments', {})
-  );
+  // Cash payments are now managed directly in Firebase manualCashPayments collection
 
   // Organization starting debt correction
   const [organizationStartingDebt, setOrganizationStartingDebt] = useState(() =>
@@ -283,7 +280,7 @@ const CustomerAnalysisPage = () => {
   useEffect(() => { debouncedSave('rememberedPayments', rememberedPayments); }, [rememberedPayments, debouncedSave]);
   useEffect(() => { debouncedSave('customerBalances', customerBalances); }, [customerBalances, debouncedSave]);
   useEffect(() => { debouncedSave('startingDebts', startingDebts); }, [startingDebts, debouncedSave]);
-  useEffect(() => { debouncedSave('cashPayments', cashPayments); }, [cashPayments, debouncedSave]);
+  // Cash payments localStorage save removed - using Firebase directly
   useEffect(() => { debouncedSave('organizationStartingDebt', organizationStartingDebt); }, [organizationStartingDebt, debouncedSave]);
 
   // ==================== DATE PARSING UTILITIES ====================
@@ -448,8 +445,8 @@ const CustomerAnalysisPage = () => {
 
   // ==================== UTILITY FUNCTIONS ====================
   // SUMIFS logic: Sum payments (E) where customer ID (L) matches and date (A) >= 2025-04-30
-  // Use ONLY Firebase payments to avoid double-counting (Excel payments are auto-saved to Firebase)
-  const calculateCustomerPayments = useCallback((customerId, allPayments) => {
+  // ONLY TWO AUTHORIZED SOURCES: 1) Bank statements in 'payments' collection, 2) Manual cash in 'manualCashPayments' collection
+  const calculateCustomerPayments = useCallback((customerId, allPayments, manualCashPayments) => {
     if (!customerId) return { totalPayments: 0, paymentCount: 0, payments: [] };
     
     const cutoffDate = '2025-04-30';
@@ -457,10 +454,41 @@ const CustomerAnalysisPage = () => {
     let paymentCount = 0;
     const payments = [];
     
-    // Process ONLY Firebase payments (single source of truth)
-    // This includes: Excel/bank payments, manual cash payments, all other payments
+    // SOURCE 1: Bank Statement Payments from 'payments' collection (ONLY bank sources)
     if (allPayments?.length) {
       allPayments.forEach(payment => {
+        if (payment.supplierName === customerId) {
+          // FILTER: Only accept bank statement payments (authorized sources)
+          const isAuthorizedBankPayment = payment.source === 'tbc' || 
+                                         payment.source === 'bog' || 
+                                         payment.source === 'excel' ||
+                                         (payment.description && payment.description.includes('Bank Payment'));
+          
+          if (isAuthorizedBankPayment) {
+            const paymentDate = payment.paymentDate?.toDate ? payment.paymentDate.toDate() : new Date(payment.paymentDate);
+            const dateStr = paymentDate.toISOString().split('T')[0];
+            
+            if (dateStr >= cutoffDate) {
+              totalPayments += Number(payment.amount) || 0;
+              paymentCount += 1;
+              payments.push({
+                customerId,
+                payment: Number(payment.amount) || 0,
+                date: dateStr,
+                source: payment.source || 'bank-statement',
+                uniqueCode: payment.uniqueCode || null,
+                description: payment.description || '',
+                paymentType: 'bank-statement'
+              });
+            }
+          }
+        }
+      });
+    }
+    
+    // SOURCE 2: Manual Cash Payments from 'manualCashPayments' collection
+    if (manualCashPayments?.length) {
+      manualCashPayments.forEach(payment => {
         if (payment.supplierName === customerId) {
           const paymentDate = payment.paymentDate?.toDate ? payment.paymentDate.toDate() : new Date(payment.paymentDate);
           const dateStr = paymentDate.toISOString().split('T')[0];
@@ -472,41 +500,17 @@ const CustomerAnalysisPage = () => {
               customerId,
               payment: Number(payment.amount) || 0,
               date: dateStr,
-              source: payment.source || 'firebase',
-              uniqueCode: payment.uniqueCode || null,
-              description: payment.description || ''
+              source: 'manual-cash',
+              description: payment.description || 'Manual Cash Payment',
+              paymentType: 'manual-cash'
             });
           }
         }
       });
     }
     
-    // Add local cash payments that haven't been synced to Firebase yet
-    Object.entries(cashPayments).forEach(([paymentId, payment]) => {
-      if (payment.customerId === customerId && payment.date >= cutoffDate) {
-        // Only add if not already in Firebase (prevent duplicates)
-        const existsInFirebase = allPayments?.some(fp => 
-          fp.supplierName === customerId && 
-          Math.abs(Number(fp.amount) - parseFloat(payment.amount)) < 0.01 &&
-          fp.paymentDate?.toDate().toISOString().split('T')[0] === payment.date
-        );
-        
-        if (!existsInFirebase) {
-          totalPayments += parseFloat(payment.amount) || 0;
-          paymentCount += 1;
-          payments.push({
-            customerId,
-            payment: parseFloat(payment.amount) || 0,
-            date: payment.date,
-            source: 'cash-local',
-            paymentId
-          });
-        }
-      }
-    });
-    
     return { totalPayments, paymentCount, payments };
-  }, [cashPayments]);
+  }, []);
 
   // Auto-create customer from waybill data
   const autoCreateCustomer = useCallback(async (customerId, customerName) => {
@@ -1083,7 +1087,7 @@ const CustomerAnalysisPage = () => {
       ...Object.keys(startingDebts),
       // Add customers who have payments but no sales/starting debt
       ...firebasePayments.map(p => p.supplierName).filter(Boolean),
-      ...Object.values(cashPayments).map(p => p.customerId).filter(Boolean)
+      ...firebaseManualCashPayments.map(p => p.supplierName).filter(Boolean)
     ]);
 
     allIds.forEach(customerId => {
@@ -1095,11 +1099,11 @@ const CustomerAnalysisPage = () => {
       const customerName = getCustomerName(customerId);
       
       // Use SUMIFS logic: Sum payments where customer ID matches and date >= 2025-04-30
-      const paymentData = calculateCustomerPayments(customerId, firebasePayments);
+      const paymentData = calculateCustomerPayments(customerId, firebasePayments, firebaseManualCashPayments);
       const currentDebt = sd.amount + sales.totalSales - paymentData.totalPayments;
       
       // Calculate cash payments for this customer (>= 2025-04-30)
-      const customerCashPayments = paymentData.payments.filter(p => p.source === 'cash');
+      const customerCashPayments = paymentData.payments.filter(p => p.paymentType === 'manual-cash');
       const totalCashPayments = customerCashPayments.reduce((sum, p) => sum + p.payment, 0);
 
       analysis[customerId] = {
@@ -1121,7 +1125,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedWaybills, firebasePayments, cashPayments, getCustomerName, calculateCustomerPayments]);
+  }, [startingDebts, rememberedWaybills, firebasePayments, firebaseManualCashPayments, getCustomerName, calculateCustomerPayments]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
@@ -1172,7 +1176,7 @@ const CustomerAnalysisPage = () => {
   }, []);
 
   // ==================== CASH PAYMENT MANAGEMENT ====================
-  const addCashPayment = useCallback((customerId, amount, date) => {
+  const addCashPayment = useCallback(async (customerId, amount, date) => {
     if (!customerId?.trim()) { setError('გთხოვთ, შეიყვანოთ მომხმარებლის ID'); return false; }
 
     const numericAmount = parseFloat(amount);
@@ -1180,39 +1184,55 @@ const CustomerAnalysisPage = () => {
 
     if (!date) { setError('გთხოვთ, შეარჩიოთ თარიღი'); return false; }
 
-    const paymentId = `cash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newPayment = { customerId: customerId.trim(), amount: numericAmount, date, createdAt: new Date().toISOString() };
+    try {
+      const newPayment = { 
+        supplierName: customerId.trim(), 
+        amount: numericAmount, 
+        paymentDate: date,
+        description: 'Manual Cash Payment',
+        source: 'manual-cash',
+        createdAt: new Date().toISOString() 
+      };
 
-    setCashPayments(prev => ({ ...prev, [paymentId]: newPayment }));
-    setError('');
-    return true;
-  }, []);
+      await addManualCashPayment(newPayment);
+      setError('');
+      return true;
+    } catch (error) {
+      console.error('Error adding manual cash payment:', error);
+      setError('ნაღდი გადახდის დამატების შეცდომა: ' + error.message);
+      return false;
+    }
+  }, [addManualCashPayment]);
 
-  const updateCashPayment = useCallback((paymentId, amount) => {
+  const updateCashPayment = useCallback(async (paymentId, amount) => {
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) { setError('გთხოვთ, შეიყვანოთ სწორი თანხა'); return; }
 
-    setCashPayments(prev => ({
-      ...prev,
-      [paymentId]: { ...prev[paymentId], amount: numericAmount }
-    }));
-    setEditingCashPayment(null);
-    setCashPaymentValue('');
-    setError('');
-  }, []);
+    try {
+      await updateManualCashPayment(paymentId, { amount: numericAmount });
+      setEditingCashPayment(null);
+      setCashPaymentValue('');
+      setError('');
+    } catch (error) {
+      console.error('Error updating manual cash payment:', error);
+      setError('ნაღდი გადახდის განახლების შეცდომა: ' + error.message);
+    }
+  }, [updateManualCashPayment]);
 
-  const deleteCashPayment = useCallback((paymentId) => {
+  const deleteCashPayment = useCallback(async (paymentId) => {
     if (!window.confirm('ნამდვილად გსურთ ნაღდი გადახდის წაშლა?')) return;
-    setCashPayments(prev => {
-      const updated = { ...prev };
-      delete updated[paymentId];
-      return updated;
-    });
-  }, []);
+    
+    try {
+      await deleteDocument('manualCashPayments', paymentId);
+    } catch (error) {
+      console.error('Error deleting manual cash payment:', error);
+      setError('ნაღდი გადახდის წაშლის შეცდომა: ' + error.message);
+    }
+  }, [deleteDocument]);
 
-  const handleCashPaymentSubmit = useCallback((e) => {
+  const handleCashPaymentSubmit = useCallback(async (e) => {
     e.preventDefault();
-    const success = addCashPayment(newCashPayment.customerId, newCashPayment.amount, newCashPayment.date);
+    const success = await addCashPayment(newCashPayment.customerId, newCashPayment.amount, newCashPayment.date);
     if (success) {
       setNewCashPayment({ customerId: '', amount: '', date: '' });
       setShowCashPaymentForm(false);
@@ -1707,24 +1727,26 @@ const CustomerAnalysisPage = () => {
           )}
 
           {/* Cash Payments List */}
-          {Object.keys(cashPayments).length > 0 && (
+          {firebaseManualCashPayments.length > 0 && (
             <div>
               <h4 className="font-medium text-gray-700 mb-3">
-                ნაღდი გადახდები ({Object.keys(cashPayments).length})
+                ნაღდი გადახდები ({firebaseManualCashPayments.length})
               </h4>
               <div className="space-y-2 max-h-60 overflow-y-auto">
-                {Object.entries(cashPayments)
-                  .sort(([, a], [, b]) => new Date(b.date) - new Date(a.date))
-                  .map(([paymentId, payment]) => (
-                    <div key={paymentId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                {firebaseManualCashPayments
+                  .sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate))
+                  .map((payment) => (
+                    <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex-1">
                         <div className="text-sm font-medium text-gray-900">
-                          {getCustomerName(payment.customerId)} ({payment.customerId})
+                          {getCustomerName(payment.supplierName)} ({payment.supplierName})
                         </div>
-                        <div className="text-xs text-gray-500">{payment.date}</div>
+                        <div className="text-xs text-gray-500">
+                          {payment.paymentDate?.toISOString ? payment.paymentDate.toISOString().split('T')[0] : payment.paymentDate}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {editingCashPayment === paymentId ? (
+                        {editingCashPayment === payment.id ? (
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
@@ -1735,7 +1757,7 @@ const CustomerAnalysisPage = () => {
                               className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
                             />
                             <button
-                              onClick={() => updateCashPayment(paymentId, cashPaymentValue)}
+                              onClick={() => updateCashPayment(payment.id, cashPaymentValue)}
                               className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                             >
                               შენახვა
@@ -1755,7 +1777,7 @@ const CustomerAnalysisPage = () => {
                             <span className="font-medium text-green-600">₾{Number(payment.amount).toFixed(2)}</span>
                             <button
                               onClick={() => {
-                                setEditingCashPayment(paymentId);
+                                setEditingCashPayment(payment.id);
                                 setCashPaymentValue(String(payment.amount));
                               }}
                               className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
@@ -1763,7 +1785,7 @@ const CustomerAnalysisPage = () => {
                               შეცვლა
                             </button>
                             <button
-                              onClick={() => deleteCashPayment(paymentId)}
+                              onClick={() => deleteCashPayment(payment.id)}
                               className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
                             >
                               წაშლა
