@@ -1732,6 +1732,25 @@ const CustomerAnalysisPage = () => {
           <p className="text-gray-600">ვალების მართვის სისტემა</p>
         </div>
 
+        {/* Customer Analysis Table - MOVED TO TOP */}
+        {Object.keys(calculateCustomerAnalysis).length > 0 && (
+          <CustomerAnalysisTable
+            customerAnalysis={calculateCustomerAnalysis}
+            editingDebt={editingDebt}
+            editDebtValue={editDebtValue}
+            setEditDebtValue={setEditDebtValue}
+            startEditingDebt={startEditingDebt}
+            saveDebtEdit={saveDebtEdit}
+            cancelDebtEdit={cancelDebtEdit}
+            editingItem={editingItem}
+            editValue={editValue}
+            setEditValue={setEditValue}
+            startEdit={startEdit}
+            saveEdit={saveEdit}
+            cancelEdit={cancelEdit}
+          />
+        )}
+
         {/* Main Controls */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           {/* Date Range */}
@@ -2152,24 +2171,6 @@ const CustomerAnalysisPage = () => {
           <TransactionSummaryPanel transactionSummary={transactionSummary} />
         )}
 
-        {/* Customer Analysis Table */}
-        {Object.keys(calculateCustomerAnalysis).length > 0 && (
-          <CustomerAnalysisTable
-            customerAnalysis={calculateCustomerAnalysis}
-            editingDebt={editingDebt}
-            editDebtValue={editDebtValue}
-            setEditDebtValue={setEditDebtValue}
-            startEditingDebt={startEditingDebt}
-            saveDebtEdit={saveDebtEdit}
-            cancelDebtEdit={cancelDebtEdit}
-            editingItem={editingItem}
-            editValue={editValue}
-            setEditValue={setEditValue}
-            startEdit={startEdit}
-            saveEdit={saveEdit}
-            cancelEdit={cancelEdit}
-          />
-        )}
       </div>
     </div>
   );
