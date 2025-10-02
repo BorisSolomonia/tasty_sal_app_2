@@ -579,8 +579,25 @@ const CustomerAnalysisPage = () => {
   const getCustomerName = useCallback((customerId) => {
     if (!customerId) return 'უცნობი';
     if (INITIAL_CUSTOMER_DEBTS[customerId]) return INITIAL_CUSTOMER_DEBTS[customerId].name;
+
+    // Try exact match first
     const customer = firebaseCustomers?.find(c => c.Identification === customerId);
-    return customer?.CustomerName || customerId;
+    if (customer?.CustomerName) return customer.CustomerName;
+
+    // Try trimmed comparison as fallback
+    const trimmedId = String(customerId).trim();
+    const customerTrimmed = firebaseCustomers?.find(c => String(c.Identification).trim() === trimmedId);
+    if (customerTrimmed?.CustomerName) return customerTrimmed.CustomerName;
+
+    // Debug logging for customers not found
+    if (firebaseCustomers?.length > 0) {
+      console.warn(`⚠️ Customer name not found for ID: "${customerId}" (type: ${typeof customerId})`);
+      // Show a sample of IDs in Firebase for debugging
+      const sampleIds = firebaseCustomers.slice(0, 3).map(c => `"${c.Identification}" (type: ${typeof c.Identification})`);
+      console.warn(`Sample Firebase customer IDs:`, sampleIds);
+    }
+
+    return customerId;
   }, [firebaseCustomers]);
 
   const validateDateRange = useCallback((start, end) => {
@@ -1149,8 +1166,13 @@ const CustomerAnalysisPage = () => {
       };
       const sd = startingDebts[customerId] || { amount: 0, date: null };
 
-      // Prefer customer name from waybills (most up-to-date from RS.ge), fallback to Firebase lookup
-      const customerName = sales.waybills?.[0]?.customerName || getCustomerName(customerId);
+      // Get customer name from multiple sources in priority order:
+      // 1. Waybills (most up-to-date from RS.ge API)
+      // 2. Starting debts (manually entered with names)
+      // 3. Firebase customers collection
+      const customerName = sales.waybills?.[0]?.customerName
+        || sd.name
+        || getCustomerName(customerId);
       
       // Use SUMIFS logic: Sum payments where customer ID matches and date >= 2025-04-30
       const paymentData = calculateCustomerPayments(customerId, firebasePayments, firebaseManualCashPayments);
