@@ -1149,7 +1149,8 @@ const CustomerAnalysisPage = () => {
       };
       const sd = startingDebts[customerId] || { amount: 0, date: null };
 
-      const customerName = getCustomerName(customerId);
+      // Prefer customer name from waybills (most up-to-date from RS.ge), fallback to Firebase lookup
+      const customerName = sales.waybills?.[0]?.customerName || getCustomerName(customerId);
       
       // Use SUMIFS logic: Sum payments where customer ID matches and date >= 2025-04-30
       const paymentData = calculateCustomerPayments(customerId, firebasePayments, firebaseManualCashPayments);
