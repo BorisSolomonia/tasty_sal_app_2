@@ -577,70 +577,33 @@ const CustomerAnalysisPage = () => {
   }, [firebaseCustomers, addCustomer]);
 
   const getCustomerName = useCallback((customerId) => {
-    const problematicIds = ['405496841', '405108226', '405702912', '400393445', '62007016494', '1024014004', '336065224', '404965169', '206347960'];
-    const isProblematic = problematicIds.includes(customerId);
-    const debugLog = isProblematic ? console.log : () => {};
-    const debugWarn = isProblematic ? console.warn : () => {};
-    const debugError = isProblematic ? console.error : () => {};
-
-    if (!customerId) {
-      debugLog('🔍 getCustomerName: customerId is empty/null');
-      return 'უცნობი';
-    }
+    if (!customerId) return 'უცნობი';
 
     // Check INITIAL_CUSTOMER_DEBTS
     if (INITIAL_CUSTOMER_DEBTS[customerId]) {
-      debugLog(`✅ Found in INITIAL_CUSTOMER_DEBTS: ${customerId} -> ${INITIAL_CUSTOMER_DEBTS[customerId].name}`);
       return INITIAL_CUSTOMER_DEBTS[customerId].name;
     }
 
-    debugLog(`🔍 getCustomerName: Looking up "${customerId}" (type: ${typeof customerId}, length: ${String(customerId).length})`);
-    debugLog(`🔍 Firebase customers available: ${firebaseCustomers?.length || 0}`);
-
     // Try exact match first
     const customer = firebaseCustomers?.find(c => c.Identification === customerId);
-    if (customer?.CustomerName) {
-      debugLog(`✅ EXACT match found: ${customerId} -> ${customer.CustomerName}`);
-      return customer.CustomerName;
-    } else {
-      debugLog(`❌ NO exact match for: "${customerId}"`);
-    }
+    if (customer?.CustomerName) return customer.CustomerName;
 
     // Try trimmed comparison as fallback
     const trimmedId = String(customerId).trim();
     const customerTrimmed = firebaseCustomers?.find(c => String(c.Identification).trim() === trimmedId);
-    if (customerTrimmed?.CustomerName) {
-      debugLog(`✅ TRIMMED match found: "${customerId}" -> ${customerTrimmed.CustomerName}`);
-      return customerTrimmed.CustomerName;
-    } else {
-      debugLog(`❌ NO trimmed match for: "${trimmedId}"`);
-    }
+    if (customerTrimmed?.CustomerName) return customerTrimmed.CustomerName;
 
-    // Find similar IDs for debugging
-    const similarIds = firebaseCustomers?.filter(c => {
-      const fbId = String(c.Identification);
-      return fbId.includes(customerId) || customerId.includes(fbId);
-    }).map(c => ({ id: c.Identification, name: c.CustomerName }));
-
-    if (similarIds && similarIds.length > 0) {
-      debugWarn(`🔎 Similar IDs found in Firebase:`, similarIds);
-    } else {
-      debugWarn(`⚠️ NO similar IDs found for: "${customerId}"`);
-    }
-
-    // Show exact Firebase IDs that match the numeric pattern
+    // Try numeric match without spaces
     const exactNumericMatch = firebaseCustomers?.find(c => {
       const fbId = String(c.Identification).replace(/\s/g, '');
       const lookupId = String(customerId).replace(/\s/g, '');
       return fbId === lookupId;
     });
+    if (exactNumericMatch?.CustomerName) return exactNumericMatch.CustomerName;
 
-    if (exactNumericMatch) {
-      debugLog(`✅ NUMERIC match (no spaces): ${customerId} -> ${exactNumericMatch.CustomerName}`);
-      return exactNumericMatch.CustomerName;
-    }
+    // Customer not found - log this for debugging
+    console.warn(`⚠️ Customer name not found in Firebase for ID: "${customerId}"`);
 
-    debugError(`❌ FINAL FALLBACK: Returning ID as name for "${customerId}"`);
     return customerId;
   }, [firebaseCustomers]);
 
@@ -1171,50 +1134,23 @@ const CustomerAnalysisPage = () => {
   const calculateCustomerAnalysis = useMemo(() => {
     performanceMonitor.start('calculate-analysis');
 
-    console.log('\n🔥 ===== CUSTOMER ANALYSIS CALCULATION START =====');
-    console.log('📌 DEBUG MODE: Tracking customer name resolution');
-    console.log('📌 Watch for: Where names come from (waybills/Firebase/fallback)');
-    console.log(`📦 Firebase customers count: ${firebaseCustomers?.length || 0}`);
-    console.log(`📦 Waybills count: ${Object.keys(rememberedWaybills).length}`);
-
-    // Debug: Check specific problematic customers
-    const problematicIds = ['405496841', '405108226', '405702912', '400393445', '62007016494', '1024014004', '336065224', '404965169', '206347960'];
-    console.log('\n🔍 Checking problematic customer IDs in Firebase:');
-    problematicIds.forEach(id => {
-      const found = firebaseCustomers?.find(c => c.Identification === id);
-      console.log(`   ${id}: ${found ? `✅ Found - "${found.CustomerName}"` : '❌ NOT FOUND'}`);
-    });
-
-    // Debug: Show sample customers from Firebase
-    if (firebaseCustomers && firebaseCustomers.length > 0) {
-      console.log('\n📋 Sample Firebase customers (first 5):');
-      firebaseCustomers.slice(0, 5).forEach(c => {
-        console.log(`   - ID: "${c.Identification}" (type: ${typeof c.Identification}) | Name: "${c.CustomerName}"`);
-      });
-    }
-
     const analysis = {};
     const customerSales = new Map();
 
-    // Waybills (sales) after cutoff - ONLY include waybills after April 29th, 2025
-    let waybillsProcessed = 0;
-    const problematicIds = ['405496841', '405108226', '405702912', '400393445', '62007016494', '1024014004', '336065224', '404965169', '206347960'];
+    // Track name resolution statistics
+    const nameResolutionStats = {
+      fromWaybills: 0,
+      fromStartingDebts: 0,
+      fromFirebase: 0,
+      notFound: 0
+    };
 
+    // Waybills (sales) after cutoff - ONLY include waybills after April 29th, 2025
     Object.values(rememberedWaybills).forEach(wb => {
       if (!wb.customerId) return;
 
       // CRITICAL: Only include waybills that are after cutoff date (April 30th onwards)
       if (!wb.isAfterCutoff) return;
-
-      waybillsProcessed++;
-
-      // Debug problematic customers
-      if (problematicIds.includes(wb.customerId)) {
-        console.log(`\n🔍 Waybill for problematic customer ${wb.customerId}:`);
-        console.log(`   - customerName in waybill: "${wb.customerName}"`);
-        console.log(`   - amount: ${wb.amount}`);
-        console.log(`   - date: ${wb.date}`);
-      }
 
       if (!customerSales.has(wb.customerId)) {
         customerSales.set(wb.customerId, {
@@ -1230,9 +1166,6 @@ const CustomerAnalysisPage = () => {
       customer.waybills.push(wb);
     });
 
-    console.log(`\n📊 Processed ${waybillsProcessed} waybills after cutoff`);
-    console.log(`📊 Unique customers with sales: ${customerSales.size}`);
-
     // Get all unique customer IDs from all sources
     const allIds = new Set([
       ...customerSales.keys(),
@@ -1241,8 +1174,6 @@ const CustomerAnalysisPage = () => {
       ...firebasePayments.map(p => p.supplierName).filter(Boolean),
       ...firebaseManualCashPayments.map(p => p.supplierName).filter(Boolean)
     ]);
-
-    const problematicIdsSet = new Set(problematicIds);
 
     allIds.forEach(customerId => {
       const sales = customerSales.get(customerId) || {
@@ -1255,22 +1186,31 @@ const CustomerAnalysisPage = () => {
       // 2. Starting debts (manually entered with names)
       // 3. Firebase customers collection
 
-      // Only log for problematic customers to reduce noise
-      const isProblematic = problematicIdsSet.has(customerId);
-      if (isProblematic) {
-        console.log(`\n📊 Resolving name for PROBLEMATIC customer: ${customerId}`);
-        console.log(`   - Waybills available: ${sales.waybills?.length || 0}`);
-        console.log(`   - Waybill[0] name: ${sales.waybills?.[0]?.customerName || 'N/A'}`);
-        console.log(`   - Starting debt name: ${sd.name || 'N/A'}`);
-      }
+      let customerName;
+      let source;
 
-      const customerName = sales.waybills?.[0]?.customerName
-        || sd.name
-        || getCustomerName(customerId);
-
-      if (isProblematic) {
-        console.log(`   ✅ FINAL name resolved: ${customerName}`);
-        console.log(`   ⚠️ NAME IS ${customerName === customerId ? 'SAME AS ID (PROBLEM!)' : 'DIFFERENT FROM ID (OK)'}`);
+      if (sales.waybills?.[0]?.customerName) {
+        customerName = sales.waybills[0].customerName;
+        source = 'waybill';
+        nameResolutionStats.fromWaybills++;
+      } else if (sd.name) {
+        customerName = sd.name;
+        source = 'startingDebt';
+        nameResolutionStats.fromStartingDebts++;
+      } else {
+        customerName = getCustomerName(customerId);
+        if (customerName === customerId) {
+          source = 'notFound';
+          nameResolutionStats.notFound++;
+          console.warn(`⚠️ NAME RESOLUTION FAILED for customer ID: ${customerId}`);
+          console.warn(`   - Has waybills: ${sales.waybills?.length > 0 ? 'Yes (' + sales.waybills.length + ')' : 'No'}`);
+          console.warn(`   - Waybill[0] customerName: ${sales.waybills?.[0]?.customerName || 'N/A'}`);
+          console.warn(`   - Has starting debt: ${sd.name ? 'Yes' : 'No'}`);
+          console.warn(`   - Firebase customers available: ${firebaseCustomers?.length || 0}`);
+        } else {
+          source = 'firebase';
+          nameResolutionStats.fromFirebase++;
+        }
       }
       
       // Use SUMIFS logic: Sum payments where customer ID matches and date >= 2025-04-30
@@ -1298,9 +1238,22 @@ const CustomerAnalysisPage = () => {
       };
     });
 
+    // Log name resolution summary
+    console.log('\n📊 CUSTOMER NAME RESOLUTION SUMMARY:');
+    console.log(`   ✅ From waybills: ${nameResolutionStats.fromWaybills}`);
+    console.log(`   ✅ From starting debts: ${nameResolutionStats.fromStartingDebts}`);
+    console.log(`   ✅ From Firebase: ${nameResolutionStats.fromFirebase}`);
+    console.log(`   ❌ Not found (showing ID): ${nameResolutionStats.notFound}`);
+    console.log(`   📦 Total customers: ${allIds.size}`);
+
+    if (nameResolutionStats.notFound > 0) {
+      console.warn(`\n⚠️ ${nameResolutionStats.notFound} customers are showing IDs instead of names!`);
+      console.warn('   Check warnings above for details on each failed resolution.');
+    }
+
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedWaybills, firebasePayments, firebaseManualCashPayments, getCustomerName, calculateCustomerPayments]);
+  }, [startingDebts, rememberedWaybills, firebasePayments, firebaseManualCashPayments, getCustomerName, calculateCustomerPayments, firebaseCustomers]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
