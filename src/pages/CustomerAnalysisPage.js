@@ -576,6 +576,19 @@ const CustomerAnalysisPage = () => {
     return false;
   }, [firebaseCustomers, addCustomer]);
 
+  // Validate if a name is actually a customer ID (9 or 11 digits)
+  const isNameActuallyId = useCallback((name) => {
+    if (!name || typeof name !== 'string') return false;
+
+    // Remove common separators and spaces
+    const cleaned = name.trim().replace(/[\s\-_.]/g, '');
+
+    // Check if it's 9 or 11 digits (Georgian TIN format)
+    const isId = /^[0-9]{9}$|^[0-9]{11}$/.test(cleaned);
+
+    return isId;
+  }, []);
+
   const getCustomerName = useCallback((customerId) => {
     if (!customerId) return 'უცნობი';
 
@@ -1197,10 +1210,34 @@ const CustomerAnalysisPage = () => {
         customerName = sales.waybills[0].customerName;
         source = 'waybill';
         nameResolutionStats.fromWaybills++;
+
+        // VALIDATE: Check if waybill customerName is actually an ID
+        if (isNameActuallyId(customerName)) {
+          console.error(`\n🔴🔴🔴 ERROR: Waybill contains ID instead of name!`);
+          console.error(`   Customer ID: ${customerId}`);
+          console.error(`   Waybill customerName field: "${customerName}"`);
+          console.error(`   ⚠️ REASON: RS.ge API returned customer ID in BUYER_NAME field`);
+          console.error(`   Source: Waybill ID ${sales.waybills[0].waybillId}`);
+          console.error(`   Raw waybill data:`);
+          console.error(`      ├─ BUYER_TIN: ${sales.waybills[0].BUYER_TIN || sales.waybills[0].buyer_tin || sales.waybills[0].BuyerTin || 'N/A'}`);
+          console.error(`      ├─ BUYER_NAME: ${sales.waybills[0].BUYER_NAME || sales.waybills[0].buyer_name || sales.waybills[0].BuyerName || 'N/A'}`);
+          console.error(`      ├─ Waybill Date: ${sales.waybills[0].date}`);
+          console.error(`      └─ isAfterCutoff: ${sales.waybills[0].isAfterCutoff}`);
+          console.error(`   ✅ SOLUTION: Add customer to Firebase or starting debts with proper name`);
+        }
       } else if (sd.name) {
         customerName = sd.name;
         source = 'startingDebt';
         nameResolutionStats.fromStartingDebts++;
+
+        // VALIDATE: Check if starting debt name is actually an ID
+        if (isNameActuallyId(customerName)) {
+          console.error(`\n🔴🔴🔴 ERROR: Starting debt contains ID instead of name!`);
+          console.error(`   Customer ID: ${customerId}`);
+          console.error(`   Starting debt name field: "${customerName}"`);
+          console.error(`   ⚠️ REASON: Starting debt was entered with ID instead of proper name`);
+          console.error(`   ✅ SOLUTION: Update starting debt with proper customer name`);
+        }
       } else {
         customerName = getCustomerName(customerId);
         if (customerName === customerId) {
@@ -1214,6 +1251,15 @@ const CustomerAnalysisPage = () => {
         } else {
           source = 'firebase';
           nameResolutionStats.fromFirebase++;
+
+          // VALIDATE: Check if Firebase name is actually an ID
+          if (isNameActuallyId(customerName)) {
+            console.error(`\n🔴🔴🔴 ERROR: Firebase contains ID instead of name!`);
+            console.error(`   Customer ID: ${customerId}`);
+            console.error(`   Firebase CustomerName field: "${customerName}"`);
+            console.error(`   ⚠️ REASON: Customer record in Firebase has ID in CustomerName field`);
+            console.error(`   ✅ SOLUTION: Update Firebase customer record with proper name`);
+          }
         }
       }
       
@@ -1250,9 +1296,17 @@ const CustomerAnalysisPage = () => {
     console.log(`   ❌ Not found (showing ID): ${nameResolutionStats.notFound}`);
     console.log(`   📦 Total customers: ${allIds.size}`);
 
+    // Validate names are not IDs
+    const namesWithIdFormat = Object.values(analysis).filter(c => isNameActuallyId(c.customerName));
+    if (namesWithIdFormat.length > 0) {
+      console.error(`\n🔴🔴🔴 VALIDATION ERROR: ${namesWithIdFormat.length} customers have IDs in name field!`);
+      console.error('🔴🔴🔴 These names are 9 or 11 digit numbers - they should be actual names!');
+      console.error('🔴🔴🔴 Scroll up to see detailed error logs with REASON and SOLUTION.');
+    }
+
     if (nameResolutionStats.notFound > 0) {
       console.error(`\n🔴🔴🔴 PROBLEM: ${nameResolutionStats.notFound} customers are showing IDs instead of names!`);
-      console.error('🔴🔴🔴 Scroll up to see ⚠️ NAME RESOLUTION FAILED warnings for details.');
+      console.error('🔴🔴🔴 Scroll up to see NAME RESOLUTION FAILED warnings for details.');
     } else {
       console.log('✅ All customer names resolved successfully!');
     }
@@ -1260,7 +1314,7 @@ const CustomerAnalysisPage = () => {
 
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedWaybills, firebasePayments, firebaseManualCashPayments, getCustomerName, calculateCustomerPayments, firebaseCustomers]);
+  }, [startingDebts, rememberedWaybills, firebasePayments, firebaseManualCashPayments, getCustomerName, calculateCustomerPayments, firebaseCustomers, isNameActuallyId]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
@@ -2066,24 +2120,51 @@ const CustomerAnalysisPage = () => {
                 </div>
               </div>
 
-              {/* Problem Cases - Customers showing IDs */}
-              {Object.values(calculateCustomerAnalysis).filter(c => c.customerName === c.customerId).length > 0 && (
+              {/* Problem Cases - Customers showing IDs or names that are actually IDs */}
+              {Object.values(calculateCustomerAnalysis).filter(c => {
+                const nameIsId = /^[0-9\s\-_.]{9,11}$/.test(c.customerName?.trim().replace(/[\s\-_.]/g, ''));
+                return c.customerName === c.customerId || nameIsId;
+              }).length > 0 && (
                 <div className="bg-red-50 border border-red-300 rounded p-4">
                   <div className="text-sm font-bold text-red-800 mb-3">
                     🔴 პრობლემური მომხმარებლები (ნაჩვენებია ID-ები სახელების ნაცვლად):
                   </div>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {Object.values(calculateCustomerAnalysis)
-                      .filter(c => c.customerName === c.customerId)
+                      .filter(c => {
+                        const nameIsId = /^[0-9\s\-_.]{9,11}$/.test(c.customerName?.trim().replace(/[\s\-_.]/g, ''));
+                        return c.customerName === c.customerId || nameIsId;
+                      })
                       .map(customer => {
                         const customerWaybills = Object.values(rememberedWaybills).filter(
                           wb => wb.customerId === customer.customerId && wb.isAfterCutoff
                         );
+                        const nameIsActuallyId = /^[0-9]{9}$|^[0-9]{11}$/.test(customer.customerName?.trim().replace(/[\s\-_.]/g, ''));
 
                         return (
                           <div key={customer.customerId} className="bg-white border border-red-200 rounded p-3">
                             <div className="font-mono text-sm text-red-900 font-bold mb-2">
                               ID: {customer.customerId}
+                              {nameIsActuallyId && (
+                                <span className="ml-2 px-2 py-1 bg-red-600 text-white text-xs rounded">
+                                  ⚠️ სახელი = ID
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Current Name Display */}
+                            <div className="mb-3 p-2 bg-yellow-50 border border-yellow-300 rounded">
+                              <div className="text-xs">
+                                <span className="text-gray-600 font-medium">მიმდინარე სახელი:</span>{' '}
+                                <span className={nameIsActuallyId ? 'text-red-700 font-bold' : 'text-gray-800'}>
+                                  "{customer.customerName}"
+                                </span>
+                                {nameIsActuallyId && (
+                                  <div className="mt-1 text-red-700 font-bold">
+                                    🔴 ERROR: ეს არის ID, არა სახელი! (9 ან 11 ციფრი)
+                                  </div>
+                                )}
+                              </div>
                             </div>
 
                             {/* Waybill Analysis */}
@@ -2101,6 +2182,9 @@ const CustomerAnalysisPage = () => {
                                     <span className="text-gray-600 min-w-[120px]">პირველი ზ/დ სახელი:</span>
                                     <span className={customerWaybills[0]?.customerName ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>
                                       {customerWaybills[0]?.customerName || '❌ ცარიელი/არ არის'}
+                                      {customerWaybills[0]?.customerName && /^[0-9]{9}$|^[0-9]{11}$/.test(customerWaybills[0].customerName.trim().replace(/[\s\-_.]/g, '')) && (
+                                        <span className="ml-2 text-red-700 font-bold">⚠️ ID!</span>
+                                      )}
                                     </span>
                                   </div>
 
