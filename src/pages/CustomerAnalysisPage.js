@@ -2341,6 +2341,224 @@ const CustomerAnalysisPage = () => {
                 </div>
               </div>
             )}
+
+            {/* Export All Waybills as JSON */}
+            <div className="mt-6 border-t pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h4 className="text-sm font-bold text-gray-800">💾 ზედდებულების ექსპორტი დიაგნოსტიკისთვის</h4>
+                  <p className="text-xs text-gray-600 mt-1">
+                    ჩამოტვირთეთ ყველა ზედდებული JSON ფაილად დეტალური ანალიზისთვის
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const diagnosticData = {
+                      metadata: {
+                        exportDate: new Date().toISOString(),
+                        totalProcessed: waybillDiagnostics.totalProcessed,
+                        validCount: waybillDiagnostics.validNames.length,
+                        idAsNameCount: waybillDiagnostics.idAsName.length,
+                        emptyNameCount: waybillDiagnostics.emptyNames.length,
+                        invalidIdCount: waybillDiagnostics.invalidNames.length,
+                        dateRange: {
+                          start: dateRange.startDate,
+                          end: dateRange.endDate
+                        }
+                      },
+                      waybills: {
+                        all: waybillDiagnostics.rawSamples,
+                        valid: waybillDiagnostics.validNames,
+                        idAsName: waybillDiagnostics.idAsName,
+                        emptyNames: waybillDiagnostics.emptyNames,
+                        invalidIds: waybillDiagnostics.invalidNames
+                      },
+                      rememberedWaybills: Object.values(rememberedWaybills)
+                    };
+
+                    const blob = new Blob([JSON.stringify(diagnosticData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `waybills_diagnostic_${dateRange.startDate}_${dateRange.endDate}_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm font-medium"
+                >
+                  📥 ჩამოტვირთვა JSON
+                </button>
+              </div>
+
+              {/* JSON Viewer */}
+              <details className="border border-gray-300 rounded-lg">
+                <summary className="cursor-pointer p-3 bg-purple-50 hover:bg-purple-100 rounded-lg font-medium text-purple-800">
+                  👁️ ყველა ზედდებულის ნახვა (JSON ფორმატში) - {waybillDiagnostics.totalProcessed} ზედდებული
+                </summary>
+                <div className="p-4 bg-gray-900 text-gray-100 overflow-auto max-h-96">
+                  <div className="mb-3 flex justify-between items-center">
+                    <span className="text-sm text-gray-400">JSON Preview - First 50 waybills</span>
+                    <button
+                      onClick={() => {
+                        const jsonText = JSON.stringify({
+                          metadata: {
+                            exportDate: new Date().toISOString(),
+                            totalProcessed: waybillDiagnostics.totalProcessed,
+                            dateRange: { start: dateRange.startDate, end: dateRange.endDate }
+                          },
+                          waybills: waybillDiagnostics.rawSamples
+                        }, null, 2);
+                        navigator.clipboard.writeText(jsonText);
+                        alert('JSON copied to clipboard!');
+                      }}
+                      className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded"
+                    >
+                      📋 Copy JSON
+                    </button>
+                  </div>
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify({
+                      metadata: {
+                        exportDate: new Date().toISOString(),
+                        totalProcessed: waybillDiagnostics.totalProcessed,
+                        validCount: waybillDiagnostics.validNames.length,
+                        idAsNameCount: waybillDiagnostics.idAsName.length,
+                        emptyNameCount: waybillDiagnostics.emptyNames.length,
+                        invalidIdCount: waybillDiagnostics.invalidNames.length,
+                        dateRange: {
+                          start: dateRange.startDate,
+                          end: dateRange.endDate
+                        }
+                      },
+                      waybills: waybillDiagnostics.rawSamples.slice(0, 50)
+                    }, null, 2)}
+                  </pre>
+                </div>
+              </details>
+
+              {/* Categorized Waybills Viewer */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                {/* Valid Waybills */}
+                <details className="border border-green-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-green-50 hover:bg-green-100 rounded-lg text-sm font-medium text-green-800">
+                    ✅ ვალიდური ზედდებულები ({waybillDiagnostics.validNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.validNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.validNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.validNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* ID as Name Waybills */}
+                <details className="border border-red-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-red-50 hover:bg-red-100 rounded-lg text-sm font-medium text-red-800">
+                    🔴 ID როგორც სახელი ({waybillDiagnostics.idAsName.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.idAsName.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.idAsName.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.idAsName.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* Empty Names */}
+                <details className="border border-yellow-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-yellow-50 hover:bg-yellow-100 rounded-lg text-sm font-medium text-yellow-800">
+                    ⚠️ ცარიელი სახელები ({waybillDiagnostics.emptyNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.emptyNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.emptyNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.emptyNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* Invalid IDs */}
+                <details className="border border-orange-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-orange-50 hover:bg-orange-100 rounded-lg text-sm font-medium text-orange-800">
+                    ⚠️ ცარიელი ID-ები ({waybillDiagnostics.invalidNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.invalidNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.invalidNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.invalidNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+
+              {/* All Remembered Waybills JSON Export */}
+              <div className="mt-4 border-t pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">დამახსოვრებული ზედდებულები (Remembered Waybills)</h5>
+                    <p className="text-xs text-gray-500">ყველა ზედდებული რომელიც შენახულია localStorage-ში</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const rememberedData = {
+                        metadata: {
+                          exportDate: new Date().toISOString(),
+                          totalCount: Object.keys(rememberedWaybills).length,
+                          cutoffDate: CUTOFF_DATE
+                        },
+                        waybills: Object.values(rememberedWaybills)
+                      };
+
+                      const blob = new Blob([JSON.stringify(rememberedData, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `remembered_waybills_${new Date().toISOString().split('T')[0]}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition-colors"
+                  >
+                    📥 Export Remembered ({Object.keys(rememberedWaybills).length})
+                  </button>
+                </div>
+                <details className="mt-2 border border-gray-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-medium text-gray-700">
+                    👁️ ნახვა JSON-ში ({Object.keys(rememberedWaybills).length} waybills)
+                  </summary>
+                  <div className="p-3 bg-gray-900 text-gray-100 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(Object.values(rememberedWaybills).slice(0, 20), null, 2)}
+                    </pre>
+                    {Object.keys(rememberedWaybills).length > 20 && (
+                      <div className="text-center text-xs text-gray-400 mt-2">
+                        ... და კიდევ {Object.keys(rememberedWaybills).length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+            </div>
           </div>
         )}
 
