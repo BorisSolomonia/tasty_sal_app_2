@@ -248,6 +248,14 @@ const CustomerAnalysisPage = () => {
   const [editingItem, setEditingItem] = useState({ customerId: null, type: null }); // 'startingDebt' or 'cashPayment'
   const [editValue, setEditValue] = useState('');
   const [transactionSummary, setTransactionSummary] = useState(null);
+  const [waybillDiagnostics, setWaybillDiagnostics] = useState({
+    totalProcessed: 0,
+    validNames: [],
+    invalidNames: [],
+    emptyNames: [],
+    idAsName: [],
+    rawSamples: []
+  });
 
   // Performance optimization: Track processing state
   const [processingState, setProcessingState] = useState({
@@ -522,6 +530,19 @@ const CustomerAnalysisPage = () => {
     return allExistingCodes.has(code);
   }, [allExistingCodes, buildUniqueCode]);
 
+  // Validate if a name is actually a customer ID (9 or 11 digits)
+  const isNameActuallyId = useCallback((name) => {
+    if (!name || typeof name !== 'string') return false;
+
+    // Remove common separators and spaces
+    const cleaned = name.trim().replace(/[\s\-_.]/g, '');
+
+    // Check if it's 9 or 11 digits (Georgian TIN format)
+    const isId = /^[0-9]{9}$|^[0-9]{11}$/.test(cleaned);
+
+    return isId;
+  }, []);
+
   // ==================== UTILITY FUNCTIONS ====================
   const getCustomerName = useCallback((customerId) => {
     if (!customerId) return 'უცნობი';
@@ -627,6 +648,16 @@ const CustomerAnalysisPage = () => {
     // Use robust extraction from utilities
     const wbs = extractWaybillsFromResponse(data, 'Customer Analysis');
 
+    // Diagnostic tracking
+    const diagnostics = {
+      totalProcessed: 0,
+      validNames: [],
+      invalidNames: [],
+      emptyNames: [],
+      idAsName: [],
+      rawSamples: []
+    };
+
     const processedWaybills = wbs
       .filter(wb => {
         // Filter out cancelled/invalid waybills (STATUS = -1 or STATUS = -2)
@@ -638,49 +669,86 @@ const CustomerAnalysisPage = () => {
       })
       .map(wb => {
         const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
-        
-        // COMMENTED OUT OLD LOGIC:
-        // const isAfterCutoff = isAfterCutoffDate(waybillDate);
-        
-        // NEW LOGIC: More robust date checking with debugging
         const isAfterCutoff = isAfterCutoffDate(waybillDate);
-        
-        // CRITICAL: Normalize the date for consistent storage
-        let normalizedDate;
+
+        // CRITICAL: Normalize the date for consistent storage and comparison
+        let normalizedWaybillDate = null;
         if (waybillDate) {
-          const parsed = new Date(waybillDate);
-          if (!isNaN(parsed.getTime())) {
-            const y = parsed.getFullYear();
-            const m = String(parsed.getMonth() + 1).padStart(2, '0');
-            const d = String(parsed.getDate()).padStart(2, '0');
-            normalizedDate = `${y}-${m}-${d}`;
+          if (typeof waybillDate === 'string' && waybillDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            normalizedWaybillDate = waybillDate;
+          } else if (waybillDate instanceof Date) {
+            const y = waybillDate.getUTCFullYear();
+            const m = String(waybillDate.getUTCMonth() + 1).padStart(2, '0');
+            const d = String(waybillDate.getUTCDate()).padStart(2, '0');
+            normalizedWaybillDate = `${y}-${m}-${d}`;
           } else {
-            normalizedDate = waybillDate;
+            normalizedWaybillDate = parseExcelDate(waybillDate);
           }
         }
 
-        const processedWaybill = {
+        const customerId = (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim();
+        const customerName = (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim();
+
+        // DIAGNOSTIC: Track name extraction results
+        diagnostics.totalProcessed++;
+
+        const diagnosticEntry = {
+          waybillId: wb.ID || wb.id || 'unknown',
+          date: normalizedWaybillDate,
+          extractedId: customerId,
+          extractedName: customerName,
+          rawBuyerTin: wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || null,
+          rawBuyerName: wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || null,
+          isAfterCutoff,
+          validationStatus: 'unknown'
+        };
+
+        // Validate the extracted data
+        if (!customerName) {
+          diagnosticEntry.validationStatus = 'empty_name';
+          diagnosticEntry.issue = 'BUYER_NAME field is empty or missing';
+          diagnostics.emptyNames.push(diagnosticEntry);
+        } else if (isNameActuallyId(customerName)) {
+          diagnosticEntry.validationStatus = 'id_as_name';
+          diagnosticEntry.issue = 'BUYER_NAME contains ID (9 or 11 digits) instead of actual name';
+          diagnostics.idAsName.push(diagnosticEntry);
+        } else if (!customerId) {
+          diagnosticEntry.validationStatus = 'missing_id';
+          diagnosticEntry.issue = 'BUYER_TIN field is empty or missing';
+          diagnostics.invalidNames.push(diagnosticEntry);
+        } else {
+          diagnosticEntry.validationStatus = 'valid';
+          diagnostics.validNames.push(diagnosticEntry);
+        }
+
+        // Store raw samples (first 50 of each type)
+        if (diagnostics.rawSamples.length < 50) {
+          diagnostics.rawSamples.push({
+            ...diagnosticEntry,
+            allBuyerFields: Object.entries(wb)
+              .filter(([key]) => key.toLowerCase().includes('buyer') || key.toLowerCase().includes('tin') || key.toLowerCase().includes('name'))
+              .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {})
+          });
+        }
+
+        return {
           ...wb,
           // For sales waybills (get_waybills), the customer is the BUYER (who we sold to)
-          customerId: (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim(),
-          customerName: (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim(),
+          customerId,
+          customerName,
           amount: wb.normalizedAmount || parseAmount(wb.FULL_AMOUNT || wb.full_amount || wb.FullAmount || 0),
-          date: normalizedDate, // Store normalized date
+          date: normalizedWaybillDate, // Store normalized date in YYYY-MM-DD format
           waybillId: wb.ID || wb.id || wb.waybill_id || `wb_${Date.now()}_${Math.random()}`,
           isAfterCutoff
         };
-        
-        // Debug logging for waybills around the cutoff date
-        if (normalizedDate && (normalizedDate === '2025-04-29' || normalizedDate === '2025-04-30')) {
-          console.log(`🎯 CRITICAL WAYBILL: Date=${normalizedDate}, isAfterCutoff=${isAfterCutoff}, ID=${processedWaybill.waybillId}`);
-        }
-        
-        return processedWaybill;
       });
+
+    // Update diagnostics state
+    setWaybillDiagnostics(diagnostics);
 
     performanceMonitor.end('extract-waybills');
     return processedWaybills;
-  }, [isAfterCutoffDate]);
+  }, [isAfterCutoffDate, parseExcelDate, isNameActuallyId]);
 
   const fetchWaybills = useCallback(async () => {
     if (!dateRange.startDate || !dateRange.endDate) {
@@ -1324,6 +1392,15 @@ const CustomerAnalysisPage = () => {
       ...Object.keys(startingDebts)
     ]);
 
+    // Track name resolution statistics
+    const nameResolutionStats = {
+      fromWaybills: 0,
+      fromStartingDebts: 0,
+      fromFirebase: 0,
+      notFound: 0,
+      validationErrors: 0
+    };
+
     allIds.forEach(customerId => {
       const sales = customerSales.get(customerId) || {
         totalSales: 0, waybillCount: 0, waybills: []
@@ -1333,7 +1410,73 @@ const CustomerAnalysisPage = () => {
       };
       const sd = startingDebts[customerId] || { amount: 0, date: null };
 
-      const customerName = getCustomerName(customerId);
+      // Get customer name from multiple sources in priority order:
+      // 1. Waybills (most up-to-date from RS.ge API)
+      // 2. Starting debts (manually entered with names)
+      // 3. Firebase customers collection
+      let customerName;
+      let source;
+
+      if (sales.waybills?.[0]?.customerName) {
+        customerName = sales.waybills[0].customerName;
+        source = 'waybill';
+        nameResolutionStats.fromWaybills++;
+
+        // VALIDATE: Check if waybill customerName is actually an ID
+        if (isNameActuallyId(customerName)) {
+          nameResolutionStats.validationErrors++;
+          console.error(`\n🔴🔴🔴 ERROR: Waybill contains ID instead of name!`);
+          console.error(`   Customer ID: ${customerId}`);
+          console.error(`   Waybill customerName field: "${customerName}"`);
+          console.error(`   ⚠️ REASON: RS.ge API returned customer ID in BUYER_NAME field`);
+          console.error(`   Source: Waybill ID ${sales.waybills[0].waybillId}`);
+          console.error(`   Raw waybill data:`);
+          console.error(`      ├─ BUYER_TIN: ${sales.waybills[0].BUYER_TIN || sales.waybills[0].buyer_tin || sales.waybills[0].BuyerTin || 'N/A'}`);
+          console.error(`      ├─ BUYER_NAME: ${sales.waybills[0].BUYER_NAME || sales.waybills[0].buyer_name || sales.waybills[0].BuyerName || 'N/A'}`);
+          console.error(`      ├─ Waybill Date: ${sales.waybills[0].date}`);
+          console.error(`      └─ isAfterCutoff: ${sales.waybills[0].isAfterCutoff}`);
+          console.error(`   ✅ SOLUTION: Add customer to Firebase or starting debts with proper name`);
+        }
+      } else if (sd.name) {
+        customerName = sd.name;
+        source = 'startingDebt';
+        nameResolutionStats.fromStartingDebts++;
+
+        // VALIDATE: Check if starting debt name is actually an ID
+        if (isNameActuallyId(customerName)) {
+          nameResolutionStats.validationErrors++;
+          console.error(`\n🔴🔴🔴 ERROR: Starting debt contains ID instead of name!`);
+          console.error(`   Customer ID: ${customerId}`);
+          console.error(`   Starting debt name field: "${customerName}"`);
+          console.error(`   ⚠️ REASON: Starting debt was entered with ID instead of proper name`);
+          console.error(`   ✅ SOLUTION: Update starting debt with proper customer name`);
+        }
+      } else {
+        customerName = getCustomerName(customerId);
+        if (customerName === customerId) {
+          source = 'notFound';
+          nameResolutionStats.notFound++;
+          console.error(`\n🔴 NAME RESOLUTION FAILED for customer ID: ${customerId}`);
+          console.error(`   ├─ Has waybills: ${sales.waybills?.length > 0 ? 'Yes (' + sales.waybills.length + ')' : 'No'}`);
+          console.error(`   ├─ Waybill[0] customerName: "${sales.waybills?.[0]?.customerName || 'N/A'}"`);
+          console.error(`   ├─ Has starting debt: ${sd.name ? 'Yes (' + sd.name + ')' : 'No'}`);
+          console.error(`   └─ Firebase customers available: ${firebaseCustomers?.length || 0}`);
+        } else {
+          source = 'firebase';
+          nameResolutionStats.fromFirebase++;
+
+          // VALIDATE: Check if Firebase name is actually an ID
+          if (isNameActuallyId(customerName)) {
+            nameResolutionStats.validationErrors++;
+            console.error(`\n🔴🔴🔴 ERROR: Firebase contains ID instead of name!`);
+            console.error(`   Customer ID: ${customerId}`);
+            console.error(`   Firebase CustomerName field: "${customerName}"`);
+            console.error(`   ⚠️ REASON: Customer record in Firebase has ID in CustomerName field`);
+            console.error(`   ✅ SOLUTION: Update Firebase customer record with proper name`);
+          }
+        }
+      }
+
       const currentDebt = sd.amount + sales.totalSales - pays.totalPayments;
       const customerCashPayments = pays.payments.filter(p => p.source === 'cash');
       const totalCashPayments = customerCashPayments.reduce((sum, p) => sum + p.payment, 0);
@@ -1355,9 +1498,17 @@ const CustomerAnalysisPage = () => {
       };
     });
 
+    // Log name resolution summary
+    console.log('\n📊 NAME RESOLUTION SUMMARY:');
+    console.log(`   ├─ From waybills: ${nameResolutionStats.fromWaybills}`);
+    console.log(`   ├─ From starting debts: ${nameResolutionStats.fromStartingDebts}`);
+    console.log(`   ├─ From Firebase: ${nameResolutionStats.fromFirebase}`);
+    console.log(`   ├─ Not found (using ID): ${nameResolutionStats.notFound}`);
+    console.log(`   └─ 🔴 Validation errors (ID as name): ${nameResolutionStats.validationErrors}`);
+
     performanceMonitor.end('calculate-analysis');
     return analysis;
-  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, firebaseManualCashPayments, getCustomerName, dateRange, isInPaymentWindow]);
+  }, [startingDebts, rememberedPayments, rememberedWaybills, firebasePayments, cashPayments, firebaseManualCashPayments, getCustomerName, dateRange, isInPaymentWindow, isNameActuallyId, firebaseCustomers]);
 
   // ==================== DEBT MANAGEMENT ====================
   const addStartingDebt = useCallback((customerId, amount, date) => {
@@ -1731,6 +1882,448 @@ const CustomerAnalysisPage = () => {
           <h1 className="text-3xl font-bold text-gray-800 mb-2">მომხმარებელთა ანალიზი</h1>
           <p className="text-gray-600">ვალების მართვის სისტემა</p>
         </div>
+
+        {/* Waybill Data Extraction Diagnostic Section */}
+        {waybillDiagnostics.totalProcessed > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold mb-4 text-gray-700">
+              📋 ზედდებულების მონაცემთა ამოღების დიაგნოსტიკა
+            </h3>
+
+            {/* Summary Statistics */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+              <div className="bg-gray-50 border border-gray-300 rounded p-3">
+                <div className="text-xs text-gray-600 font-medium">სულ დამუშავებული</div>
+                <div className="text-2xl font-bold text-gray-900">{waybillDiagnostics.totalProcessed}</div>
+              </div>
+              <div className="bg-green-50 border border-green-300 rounded p-3">
+                <div className="text-xs text-green-700 font-medium">✅ ვალიდური</div>
+                <div className="text-2xl font-bold text-green-900">{waybillDiagnostics.validNames.length}</div>
+                <div className="text-xs text-green-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.validNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-red-50 border border-red-300 rounded p-3">
+                <div className="text-xs text-red-700 font-medium">🔴 ID როგორც სახელი</div>
+                <div className="text-2xl font-bold text-red-900">{waybillDiagnostics.idAsName.length}</div>
+                <div className="text-xs text-red-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.idAsName.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-yellow-50 border border-yellow-300 rounded p-3">
+                <div className="text-xs text-yellow-700 font-medium">⚠️ ცარიელი სახელი</div>
+                <div className="text-2xl font-bold text-yellow-900">{waybillDiagnostics.emptyNames.length}</div>
+                <div className="text-xs text-yellow-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.emptyNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-orange-50 border border-orange-300 rounded p-3">
+                <div className="text-xs text-orange-700 font-medium">⚠️ ცარიელი ID</div>
+                <div className="text-2xl font-bold text-orange-900">{waybillDiagnostics.invalidNames.length}</div>
+                <div className="text-xs text-orange-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.invalidNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+            </div>
+
+            {/* ID as Name Section */}
+            {waybillDiagnostics.idAsName.length > 0 && (
+              <div className="mb-6 bg-red-50 border border-red-300 rounded-lg p-4">
+                <h4 className="text-sm font-bold text-red-800 mb-3">
+                  🔴 CRITICAL: ზედდებულები, სადაც BUYER_NAME შეიცავს ID-ს სახელის ნაცვლად ({waybillDiagnostics.idAsName.length})
+                </h4>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {waybillDiagnostics.idAsName.slice(0, 20).map((item, idx) => (
+                    <div key={idx} className="bg-white border border-red-200 rounded p-3 text-xs">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-gray-600 font-medium">ზედდებულის ID:</span>{' '}
+                          <span className="font-mono text-gray-900">{item.waybillId}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 font-medium">თარიღი:</span>{' '}
+                          <span className="text-gray-900">{item.date || 'N/A'}</span>
+                        </div>
+                        <div className="col-span-2 border-t pt-2">
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">Raw BUYER_TIN:</span>{' '}
+                            <span className="font-mono text-blue-700">{item.rawBuyerTin || 'null'}</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">Raw BUYER_NAME:</span>{' '}
+                            <span className="font-mono text-red-700 font-bold">{item.rawBuyerName || 'null'}</span>
+                            <span className="ml-2 px-2 py-0.5 bg-red-600 text-white text-xs rounded">⚠️ ეს არის ID!</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">→ ამოღებული customerId:</span>{' '}
+                            <span className="font-mono text-blue-900">{item.extractedId}</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">→ ამოღებული customerName:</span>{' '}
+                            <span className="font-mono text-red-900 font-bold">{item.extractedName}</span>
+                          </div>
+                          <div className="mt-2 p-2 bg-red-100 rounded">
+                            <span className="text-red-800 font-medium">🔴 პრობლემა:</span>{' '}
+                            <span className="text-red-700">{item.issue}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {waybillDiagnostics.idAsName.length > 20 && (
+                    <div className="text-center text-sm text-gray-600 py-2">
+                      ... და კიდევ {waybillDiagnostics.idAsName.length - 20} ზედდებული
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Empty Names Section */}
+            {waybillDiagnostics.emptyNames.length > 0 && (
+              <div className="mb-6 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
+                <h4 className="text-sm font-bold text-yellow-800 mb-3">
+                  ⚠️ ზედდებულები ცარიელი BUYER_NAME ველით ({waybillDiagnostics.emptyNames.length})
+                </h4>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {waybillDiagnostics.emptyNames.slice(0, 10).map((item, idx) => (
+                    <div key={idx} className="bg-white border border-yellow-200 rounded p-2 text-xs flex justify-between items-center">
+                      <div>
+                        <span className="text-gray-600">ზ/დ ID:</span>{' '}
+                        <span className="font-mono">{item.waybillId}</span>
+                        <span className="ml-3 text-gray-600">თარიღი:</span>{' '}
+                        <span>{item.date || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">BUYER_TIN:</span>{' '}
+                        <span className="font-mono text-blue-700">{item.extractedId || 'null'}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {waybillDiagnostics.emptyNames.length > 10 && (
+                    <div className="text-center text-sm text-gray-600">
+                      ... და კიდევ {waybillDiagnostics.emptyNames.length - 10}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Raw Sample Data */}
+            <details className="border border-gray-300 rounded-lg">
+              <summary className="cursor-pointer p-3 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium text-gray-700">
+                🔍 Raw დეტალური მონაცემები (პირველი {Math.min(10, waybillDiagnostics.rawSamples.length)} ზედდებული)
+              </summary>
+              <div className="p-4 space-y-4 max-h-96 overflow-y-auto">
+                {waybillDiagnostics.rawSamples.slice(0, 10).map((sample, idx) => (
+                  <div key={idx} className={`border rounded p-3 text-xs ${
+                    sample.validationStatus === 'valid' ? 'border-green-300 bg-green-50' :
+                    sample.validationStatus === 'id_as_name' ? 'border-red-300 bg-red-50' :
+                    sample.validationStatus === 'empty_name' ? 'border-yellow-300 bg-yellow-50' :
+                    'border-orange-300 bg-orange-50'
+                  }`}>
+                    <div className="font-bold mb-2 flex items-center justify-between">
+                      <span>ზედდებული #{idx + 1}: {sample.waybillId}</span>
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        sample.validationStatus === 'valid' ? 'bg-green-600 text-white' :
+                        sample.validationStatus === 'id_as_name' ? 'bg-red-600 text-white' :
+                        sample.validationStatus === 'empty_name' ? 'bg-yellow-600 text-white' :
+                        'bg-orange-600 text-white'
+                      }`}>
+                        {sample.validationStatus === 'valid' ? '✅ ვალიდური' :
+                         sample.validationStatus === 'id_as_name' ? '🔴 ID როგორც სახელი' :
+                         sample.validationStatus === 'empty_name' ? '⚠️ ცარიელი სახელი' :
+                         '⚠️ ცარიელი ID'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 font-mono">
+                      <div className="grid grid-cols-2 gap-2 mb-2 pb-2 border-b">
+                        <div>
+                          <span className="text-gray-600">თარიღი:</span> {sample.date || 'N/A'}
+                        </div>
+                        <div>
+                          <span className="text-gray-600">After Cutoff:</span> {sample.isAfterCutoff ? '✅' : '❌'}
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-2 rounded">
+                        <div className="font-bold text-blue-800 mb-1">📥 ამოღებული მონაცემები:</div>
+                        <div><span className="text-gray-600">customerId:</span> <span className="text-blue-900">{sample.extractedId || '❌ null'}</span></div>
+                        <div>
+                          <span className="text-gray-600">customerName:</span>{' '}
+                          <span className={sample.validationStatus === 'id_as_name' ? 'text-red-900 font-bold' : 'text-green-900'}>
+                            {sample.extractedName || '❌ null'}
+                          </span>
+                          {sample.validationStatus === 'id_as_name' && (
+                            <span className="ml-2 text-red-700 font-bold">← ⚠️ ეს არის ID!</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-100 p-2 rounded mt-2">
+                        <div className="font-bold text-purple-800 mb-1">📄 Raw API ველები:</div>
+                        {Object.entries(sample.allBuyerFields).map(([key, value]) => (
+                          <div key={key} className="pl-2">
+                            <span className="text-purple-700">{key}:</span>{' '}
+                            <span className={key.toLowerCase().includes('name') && sample.validationStatus === 'id_as_name'
+                              ? 'text-red-900 font-bold'
+                              : 'text-gray-800'
+                            }>
+                              {typeof value === 'object' ? JSON.stringify(value) : (value || 'null')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {sample.issue && (
+                        <div className="bg-red-100 p-2 rounded mt-2">
+                          <span className="text-red-800 font-bold">⚠️ პრობლემა:</span>{' '}
+                          <span className="text-red-700">{sample.issue}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+
+            {/* Success Message */}
+            {waybillDiagnostics.idAsName.length === 0 && waybillDiagnostics.emptyNames.length === 0 && (
+              <div className="mt-4 bg-green-50 border border-green-300 rounded p-4 text-center">
+                <div className="text-green-800 font-medium">
+                  ✅ ყველა ზედდებულში სახელები სწორად არის ამოღებული!
+                </div>
+              </div>
+            )}
+
+            {/* Export All Waybills as JSON */}
+            <div className="mt-6 border-t pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h4 className="text-sm font-bold text-gray-800">💾 ზედდებულების ექსპორტი დიაგნოსტიკისთვის</h4>
+                  <p className="text-xs text-gray-600 mt-1">
+                    ჩამოტვირთეთ ყველა ზედდებული JSON ფაილად დეტალური ანალიზისთვის
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const diagnosticData = {
+                      metadata: {
+                        exportDate: new Date().toISOString(),
+                        totalProcessed: waybillDiagnostics.totalProcessed,
+                        validCount: waybillDiagnostics.validNames.length,
+                        idAsNameCount: waybillDiagnostics.idAsName.length,
+                        emptyNameCount: waybillDiagnostics.emptyNames.length,
+                        invalidIdCount: waybillDiagnostics.invalidNames.length,
+                        dateRange: {
+                          start: dateRange.startDate,
+                          end: dateRange.endDate
+                        }
+                      },
+                      waybills: {
+                        all: waybillDiagnostics.rawSamples,
+                        valid: waybillDiagnostics.validNames,
+                        idAsName: waybillDiagnostics.idAsName,
+                        emptyNames: waybillDiagnostics.emptyNames,
+                        invalidIds: waybillDiagnostics.invalidNames
+                      },
+                      rememberedWaybills: Object.values(rememberedWaybills)
+                    };
+
+                    const blob = new Blob([JSON.stringify(diagnosticData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `waybills_diagnostic_${dateRange.startDate}_${dateRange.endDate}_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm font-medium"
+                >
+                  📥 ჩამოტვირთვა JSON
+                </button>
+              </div>
+
+              {/* JSON Viewer */}
+              <details className="border border-gray-300 rounded-lg">
+                <summary className="cursor-pointer p-3 bg-purple-50 hover:bg-purple-100 rounded-lg font-medium text-purple-800">
+                  👁️ ყველა ზედდებულის ნახვა (JSON ფორმატში) - {waybillDiagnostics.totalProcessed} ზედდებული
+                </summary>
+                <div className="p-4 bg-gray-900 text-gray-100 overflow-auto max-h-96">
+                  <div className="mb-3 flex justify-between items-center">
+                    <span className="text-sm text-gray-400">JSON Preview - First 50 waybills</span>
+                    <button
+                      onClick={() => {
+                        const jsonText = JSON.stringify({
+                          metadata: {
+                            exportDate: new Date().toISOString(),
+                            totalProcessed: waybillDiagnostics.totalProcessed,
+                            dateRange: { start: dateRange.startDate, end: dateRange.endDate }
+                          },
+                          waybills: waybillDiagnostics.rawSamples
+                        }, null, 2);
+                        navigator.clipboard.writeText(jsonText);
+                        alert('JSON copied to clipboard!');
+                      }}
+                      className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded"
+                    >
+                      📋 Copy JSON
+                    </button>
+                  </div>
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify({
+                      metadata: {
+                        exportDate: new Date().toISOString(),
+                        totalProcessed: waybillDiagnostics.totalProcessed,
+                        validCount: waybillDiagnostics.validNames.length,
+                        idAsNameCount: waybillDiagnostics.idAsName.length,
+                        emptyNameCount: waybillDiagnostics.emptyNames.length,
+                        invalidIdCount: waybillDiagnostics.invalidNames.length,
+                        dateRange: {
+                          start: dateRange.startDate,
+                          end: dateRange.endDate
+                        }
+                      },
+                      waybills: waybillDiagnostics.rawSamples.slice(0, 50)
+                    }, null, 2)}
+                  </pre>
+                </div>
+              </details>
+
+              {/* Categorized Waybills Viewer */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                {/* Valid Waybills */}
+                <details className="border border-green-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-green-50 hover:bg-green-100 rounded-lg text-sm font-medium text-green-800">
+                    ✅ ვალიდური ზედდებულები ({waybillDiagnostics.validNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.validNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.validNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.validNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* ID as Name Waybills */}
+                <details className="border border-red-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-red-50 hover:bg-red-100 rounded-lg text-sm font-medium text-red-800">
+                    🔴 ID როგორც სახელი ({waybillDiagnostics.idAsName.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.idAsName.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.idAsName.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.idAsName.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* Empty Names */}
+                <details className="border border-yellow-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-yellow-50 hover:bg-yellow-100 rounded-lg text-sm font-medium text-yellow-800">
+                    ⚠️ ცარიელი სახელები ({waybillDiagnostics.emptyNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.emptyNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.emptyNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.emptyNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                {/* Invalid IDs */}
+                <details className="border border-orange-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-orange-50 hover:bg-orange-100 rounded-lg text-sm font-medium text-orange-800">
+                    ⚠️ ცარიელი ID-ები ({waybillDiagnostics.invalidNames.length})
+                  </summary>
+                  <div className="p-3 bg-gray-50 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(waybillDiagnostics.invalidNames.slice(0, 20), null, 2)}
+                    </pre>
+                    {waybillDiagnostics.invalidNames.length > 20 && (
+                      <div className="text-center text-xs text-gray-600 mt-2">
+                        ... და კიდევ {waybillDiagnostics.invalidNames.length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+
+              {/* All Remembered Waybills JSON Export */}
+              <div className="mt-4 border-t pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">დამახსოვრებული ზედდებულები (Remembered Waybills)</h5>
+                    <p className="text-xs text-gray-500">ყველა ზედდებული რომელიც შენახულია localStorage-ში</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const rememberedData = {
+                        metadata: {
+                          exportDate: new Date().toISOString(),
+                          totalCount: Object.keys(rememberedWaybills).length,
+                          cutoffDate: CUTOFF_DATE
+                        },
+                        waybills: Object.values(rememberedWaybills)
+                      };
+
+                      const blob = new Blob([JSON.stringify(rememberedData, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `remembered_waybills_${new Date().toISOString().split('T')[0]}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition-colors"
+                  >
+                    📥 Export Remembered ({Object.keys(rememberedWaybills).length})
+                  </button>
+                </div>
+                <details className="mt-2 border border-gray-300 rounded-lg">
+                  <summary className="cursor-pointer p-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-medium text-gray-700">
+                    👁️ ნახვა JSON-ში ({Object.keys(rememberedWaybills).length} waybills)
+                  </summary>
+                  <div className="p-3 bg-gray-900 text-gray-100 overflow-auto max-h-64">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words">
+                      {JSON.stringify(Object.values(rememberedWaybills).slice(0, 20), null, 2)}
+                    </pre>
+                    {Object.keys(rememberedWaybills).length > 20 && (
+                      <div className="text-center text-xs text-gray-400 mt-2">
+                        ... და კიდევ {Object.keys(rememberedWaybills).length - 20}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Customer Analysis Table - MOVED TO TOP */}
         {Object.keys(calculateCustomerAnalysis).length > 0 && (
