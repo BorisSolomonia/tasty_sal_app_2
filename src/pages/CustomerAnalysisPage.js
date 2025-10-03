@@ -1134,6 +1134,10 @@ const CustomerAnalysisPage = () => {
   const calculateCustomerAnalysis = useMemo(() => {
     performanceMonitor.start('calculate-analysis');
 
+    console.log('\n\n🔵🔵🔵 CUSTOMER NAME DEBUG - VERSION 2.0 - STARTING 🔵🔵🔵');
+    console.log(`Firebase customers loaded: ${firebaseCustomers?.length || 0}`);
+    console.log(`Waybills in memory: ${Object.keys(rememberedWaybills).length}`);
+
     const analysis = {};
     const customerSales = new Map();
 
@@ -1202,11 +1206,11 @@ const CustomerAnalysisPage = () => {
         if (customerName === customerId) {
           source = 'notFound';
           nameResolutionStats.notFound++;
-          console.warn(`⚠️ NAME RESOLUTION FAILED for customer ID: ${customerId}`);
-          console.warn(`   - Has waybills: ${sales.waybills?.length > 0 ? 'Yes (' + sales.waybills.length + ')' : 'No'}`);
-          console.warn(`   - Waybill[0] customerName: ${sales.waybills?.[0]?.customerName || 'N/A'}`);
-          console.warn(`   - Has starting debt: ${sd.name ? 'Yes' : 'No'}`);
-          console.warn(`   - Firebase customers available: ${firebaseCustomers?.length || 0}`);
+          console.error(`\n🔴 NAME RESOLUTION FAILED for customer ID: ${customerId}`);
+          console.error(`   ├─ Has waybills: ${sales.waybills?.length > 0 ? 'Yes (' + sales.waybills.length + ')' : 'No'}`);
+          console.error(`   ├─ Waybill[0] customerName: "${sales.waybills?.[0]?.customerName || 'N/A'}"`);
+          console.error(`   ├─ Has starting debt: ${sd.name ? 'Yes (' + sd.name + ')' : 'No'}`);
+          console.error(`   └─ Firebase customers available: ${firebaseCustomers?.length || 0}`);
         } else {
           source = 'firebase';
           nameResolutionStats.fromFirebase++;
@@ -1239,7 +1243,7 @@ const CustomerAnalysisPage = () => {
     });
 
     // Log name resolution summary
-    console.log('\n📊 CUSTOMER NAME RESOLUTION SUMMARY:');
+    console.log('\n\n🔵🔵🔵 CUSTOMER NAME RESOLUTION SUMMARY 🔵🔵🔵');
     console.log(`   ✅ From waybills: ${nameResolutionStats.fromWaybills}`);
     console.log(`   ✅ From starting debts: ${nameResolutionStats.fromStartingDebts}`);
     console.log(`   ✅ From Firebase: ${nameResolutionStats.fromFirebase}`);
@@ -1247,9 +1251,12 @@ const CustomerAnalysisPage = () => {
     console.log(`   📦 Total customers: ${allIds.size}`);
 
     if (nameResolutionStats.notFound > 0) {
-      console.warn(`\n⚠️ ${nameResolutionStats.notFound} customers are showing IDs instead of names!`);
-      console.warn('   Check warnings above for details on each failed resolution.');
+      console.error(`\n🔴🔴🔴 PROBLEM: ${nameResolutionStats.notFound} customers are showing IDs instead of names!`);
+      console.error('🔴🔴🔴 Scroll up to see ⚠️ NAME RESOLUTION FAILED warnings for details.');
+    } else {
+      console.log('✅ All customer names resolved successfully!');
     }
+    console.log('🔵🔵🔵 END OF CUSTOMER NAME DEBUG 🔵🔵🔵\n\n');
 
     performanceMonitor.end('calculate-analysis');
     return analysis;

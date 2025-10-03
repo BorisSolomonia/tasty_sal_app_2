@@ -3,28 +3,58 @@
 ## Problem
 Customer names in the "მომხმარებელთა ანალიზი" (Customer Analysis) page show customer IDs instead of actual names.
 
+## Quick Start
+
+1. **Hard refresh browser**: `Ctrl + Shift + R`
+2. **Open console**: Press `F12`
+3. **Go to Customer Analysis page**
+4. **Look for**: `🔵🔵🔵 CUSTOMER NAME DEBUG - VERSION 2.0` (if you don't see this, refresh again!)
+5. **Find**: `🔴 NAME RESOLUTION FAILED` messages (these show the problem)
+6. **Share the console output** with Claude
+
+---
+
 ## How to Check Logs
 
-### Step 1: Open the Application
-1. Start the application: `npm start`
-2. Navigate to the Customer Analysis page (მომხმარებელთა ანალიზი)
+### Step 1: Clear Browser Cache & Reload
+**IMPORTANT**: Old code may be cached in your browser!
+
+1. **Hard refresh**: Press `Ctrl + Shift + R` (Windows) or `Cmd + Shift + R` (Mac)
+2. Or clear cache completely:
+   - Chrome: `Ctrl + Shift + Delete` → Check "Cached images and files" → Clear data
+   - Then reload the page
 
 ### Step 2: Open Browser Console
 - **Chrome/Edge**: Press `F12` or `Ctrl+Shift+I`
 - **Firefox**: Press `F12` or `Ctrl+Shift+K`
 - Click on the **Console** tab
 
-### Step 3: Look for Logging Output
+### Step 3: Navigate to Customer Analysis Page
+Go to the "მომხმარებელთა ანალიზი" (Customer Analysis) page
 
-#### Summary Log (appears at the end)
-Look for a section like this:
+### Step 4: Look for Logging Output with Blue Circles
+
+#### You MUST see this at the START:
 ```
-📊 CUSTOMER NAME RESOLUTION SUMMARY:
+🔵🔵🔵 CUSTOMER NAME DEBUG - VERSION 2.0 - STARTING 🔵🔵🔵
+Firebase customers loaded: 150
+Waybills in memory: 2022
+```
+
+**If you DON'T see the blue circles (🔵🔵🔵), your browser is still using old cached code!**
+- Do a hard refresh: `Ctrl + Shift + R`
+- Or close the browser completely and restart
+
+#### Summary Log (scroll to find this):
+Look for a section with blue circles:
+```
+🔵🔵🔵 CUSTOMER NAME RESOLUTION SUMMARY 🔵🔵🔵
    ✅ From waybills: 45
    ✅ From starting debts: 12
    ✅ From Firebase: 23
    ❌ Not found (showing ID): 9
    📦 Total customers: 89
+🔵🔵🔵 END OF CUSTOMER NAME DEBUG 🔵🔵🔵
 ```
 
 **What this tells you:**
@@ -33,14 +63,14 @@ Look for a section like this:
 - **From Firebase**: Names found in Firebase customers collection
 - **Not found (showing ID)**: Customers where name resolution FAILED (this is the problem!)
 
-#### Detailed Failure Logs
-For each customer where name resolution fails, you'll see:
+#### Detailed Failure Logs (RED circles)
+For each customer where name resolution fails, you'll see RED error messages:
 ```
-⚠️ NAME RESOLUTION FAILED for customer ID: 405496841
-   - Has waybills: Yes (5)
-   - Waybill[0] customerName: N/A
-   - Has starting debt: No
-   - Firebase customers available: 150
+🔴 NAME RESOLUTION FAILED for customer ID: 405496841
+   ├─ Has waybills: Yes (5)
+   ├─ Waybill[0] customerName: "N/A"
+   ├─ Has starting debt: No
+   └─ Firebase customers available: 150
 ```
 
 **What to check:**
