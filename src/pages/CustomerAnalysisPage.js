@@ -2003,6 +2003,190 @@ const CustomerAnalysisPage = () => {
           <TransactionSummaryPanel transactionSummary={transactionSummary} />
         )}
 
+        {/* Customer Name Resolution Diagnostic Section */}
+        {Object.keys(calculateCustomerAnalysis).length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold mb-4 text-gray-700">
+              🔍 მომხმარებელთა სახელების დიაგნოსტიკა
+            </h3>
+            <div className="space-y-4">
+              {/* Summary Statistics */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                <div className="bg-blue-50 border border-blue-200 rounded p-3">
+                  <div className="text-xs text-blue-600 font-medium">ზედდებულებიდან</div>
+                  <div className="text-lg font-bold text-blue-900">
+                    {Object.values(calculateCustomerAnalysis).filter(c => {
+                      const sales = Array.from(new Map(Object.values(rememberedWaybills)
+                        .filter(wb => wb.customerId === c.customerId && wb.isAfterCutoff)
+                        .map(wb => [wb.waybillId, wb])).values());
+                      return sales.length > 0 && sales[0]?.customerName;
+                    }).length}
+                  </div>
+                </div>
+                <div className="bg-purple-50 border border-purple-200 rounded p-3">
+                  <div className="text-xs text-purple-600 font-medium">საწყისი ვალებიდან</div>
+                  <div className="text-lg font-bold text-purple-900">
+                    {Object.values(calculateCustomerAnalysis).filter(c =>
+                      !c.waybills?.length && startingDebts[c.customerId]?.name
+                    ).length}
+                  </div>
+                </div>
+                <div className="bg-green-50 border border-green-200 rounded p-3">
+                  <div className="text-xs text-green-600 font-medium">Firebase-დან</div>
+                  <div className="text-lg font-bold text-green-900">
+                    {Object.values(calculateCustomerAnalysis).filter(c => {
+                      const hasWaybillName = c.waybills?.length > 0 && c.waybills[0]?.customerName;
+                      const hasStartingDebtName = startingDebts[c.customerId]?.name;
+                      const isFromFirebase = !hasWaybillName && !hasStartingDebtName && c.customerName !== c.customerId;
+                      return isFromFirebase;
+                    }).length}
+                  </div>
+                </div>
+                <div className="bg-red-50 border border-red-200 rounded p-3">
+                  <div className="text-xs text-red-600 font-medium">ვერ მოიძებნა (ID)</div>
+                  <div className="text-lg font-bold text-red-900">
+                    {Object.values(calculateCustomerAnalysis).filter(c => c.customerName === c.customerId).length}
+                  </div>
+                </div>
+              </div>
+
+              {/* Firebase Customers Info */}
+              <div className="bg-gray-50 border border-gray-300 rounded p-3">
+                <div className="text-sm font-medium text-gray-700 mb-2">Firebase მომხმარებლების ბაზა:</div>
+                <div className="text-xs text-gray-600">
+                  სულ: {firebaseCustomers?.length || 0} მომხმარებელი
+                  {firebaseCustomers?.length > 0 && (
+                    <div className="mt-1 max-h-24 overflow-y-auto">
+                      <span className="font-mono">
+                        {firebaseCustomers.slice(0, 5).map(c => `${c.Identification}: ${c.CustomerName}`).join(' | ')}
+                        {firebaseCustomers.length > 5 && ` ... და კიდევ ${firebaseCustomers.length - 5}`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Problem Cases - Customers showing IDs */}
+              {Object.values(calculateCustomerAnalysis).filter(c => c.customerName === c.customerId).length > 0 && (
+                <div className="bg-red-50 border border-red-300 rounded p-4">
+                  <div className="text-sm font-bold text-red-800 mb-3">
+                    🔴 პრობლემური მომხმარებლები (ნაჩვენებია ID-ები სახელების ნაცვლად):
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {Object.values(calculateCustomerAnalysis)
+                      .filter(c => c.customerName === c.customerId)
+                      .map(customer => {
+                        const customerWaybills = Object.values(rememberedWaybills).filter(
+                          wb => wb.customerId === customer.customerId && wb.isAfterCutoff
+                        );
+
+                        return (
+                          <div key={customer.customerId} className="bg-white border border-red-200 rounded p-3">
+                            <div className="font-mono text-sm text-red-900 font-bold mb-2">
+                              ID: {customer.customerId}
+                            </div>
+
+                            {/* Waybill Analysis */}
+                            <div className="text-xs space-y-1">
+                              <div className="flex items-start gap-2">
+                                <span className="text-gray-600 min-w-[120px]">ზედდებულები:</span>
+                                <span className={customerWaybills.length > 0 ? 'text-blue-700' : 'text-gray-400'}>
+                                  {customerWaybills.length} ცალი
+                                </span>
+                              </div>
+
+                              {customerWaybills.length > 0 && (
+                                <>
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-600 min-w-[120px]">პირველი ზ/დ სახელი:</span>
+                                    <span className={customerWaybills[0]?.customerName ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>
+                                      {customerWaybills[0]?.customerName || '❌ ცარიელი/არ არის'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-600 min-w-[120px]">BUYER_TIN:</span>
+                                    <span className="text-gray-700 font-mono">
+                                      {customerWaybills[0]?.BUYER_TIN || customerWaybills[0]?.buyer_tin || customerWaybills[0]?.BuyerTin || '❌'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-600 min-w-[120px]">BUYER_NAME:</span>
+                                    <span className="text-gray-700 font-mono">
+                                      {customerWaybills[0]?.BUYER_NAME || customerWaybills[0]?.buyer_name || customerWaybills[0]?.BuyerName || '❌ ცარიელი'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-600 min-w-[120px]">ზ/დ თარიღი:</span>
+                                    <span className="text-gray-700">
+                                      {customerWaybills[0]?.date || 'N/A'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-600 min-w-[120px]">isAfterCutoff:</span>
+                                    <span className={customerWaybills[0]?.isAfterCutoff ? 'text-green-700' : 'text-red-700'}>
+                                      {customerWaybills[0]?.isAfterCutoff ? '✅ კი' : '❌ არა'}
+                                    </span>
+                                  </div>
+
+                                  {/* Show raw waybill object fields */}
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer text-blue-600 hover:text-blue-800">
+                                      👁️ ზედდებულის ყველა ველი
+                                    </summary>
+                                    <div className="mt-2 p-2 bg-gray-100 rounded text-xs font-mono overflow-x-auto">
+                                      {Object.entries(customerWaybills[0] || {})
+                                        .filter(([key]) => key.toLowerCase().includes('buyer') || key.toLowerCase().includes('name') || key.toLowerCase().includes('tin'))
+                                        .map(([key, value]) => (
+                                          <div key={key} className="py-1 border-b border-gray-300 last:border-0">
+                                            <span className="text-purple-700 font-bold">{key}:</span>{' '}
+                                            <span className="text-gray-800">
+                                              {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                            </span>
+                                          </div>
+                                        ))
+                                      }
+                                    </div>
+                                  </details>
+                                </>
+                              )}
+
+                              <div className="flex items-start gap-2">
+                                <span className="text-gray-600 min-w-[120px]">საწყისი ვალი:</span>
+                                <span className={startingDebts[customer.customerId]?.name ? 'text-green-700' : 'text-gray-400'}>
+                                  {startingDebts[customer.customerId]?.name || 'არ არის'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-start gap-2">
+                                <span className="text-gray-600 min-w-[120px]">Firebase:</span>
+                                <span className={firebaseCustomers?.find(c => c.Identification === customer.customerId) ? 'text-green-700' : 'text-red-700'}>
+                                  {firebaseCustomers?.find(c => c.Identification === customer.customerId)?.CustomerName || '❌ ვერ მოიძებნა'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* Success Message */}
+              {Object.values(calculateCustomerAnalysis).filter(c => c.customerName === c.customerId).length === 0 && (
+                <div className="bg-green-50 border border-green-300 rounded p-4 text-center">
+                  <div className="text-green-800 font-medium">
+                    ✅ ყველა მომხმარებლის სახელი წარმატებით მოიძებნა!
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Customer Analysis Table */}
         {Object.keys(calculateCustomerAnalysis).length > 0 && (
           <CustomerAnalysisTable
