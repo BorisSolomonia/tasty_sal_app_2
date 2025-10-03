@@ -245,6 +245,14 @@ const CustomerAnalysisPage = () => {
   const [editingItem, setEditingItem] = useState({ customerId: null, type: null }); // 'startingDebt' or 'cashPayment'
   const [editValue, setEditValue] = useState('');
   const [transactionSummary, setTransactionSummary] = useState(null);
+  const [waybillDiagnostics, setWaybillDiagnostics] = useState({
+    totalProcessed: 0,
+    validNames: [],
+    invalidNames: [],
+    emptyNames: [],
+    idAsName: [],
+    rawSamples: []
+  });
 
   // Performance optimization: Track processing state
   const [processingState, setProcessingState] = useState({
@@ -710,12 +718,22 @@ const CustomerAnalysisPage = () => {
     }
   }, [addPayment]);
 
-  // ==================== WAYBILL PROCESSING (UNCHANGED LOGIC) ====================
+  // ==================== WAYBILL PROCESSING WITH DIAGNOSTICS ====================
   const processWaybillsFromResponse = useCallback((data) => {
     performanceMonitor.start('extract-waybills');
 
     // Use robust extraction from utilities
     const wbs = extractWaybillsFromResponse(data, 'Customer Analysis');
+
+    // Diagnostic tracking
+    const diagnostics = {
+      totalProcessed: 0,
+      validNames: [],
+      invalidNames: [],
+      emptyNames: [],
+      idAsName: [],
+      rawSamples: []
+    };
 
     const processedWaybills = wbs
       .filter(wb => {
@@ -729,7 +747,7 @@ const CustomerAnalysisPage = () => {
       .map(wb => {
         const waybillDate = wb.CREATE_DATE || wb.create_date || wb.CreateDate;
         const isAfterCutoff = isAfterCutoffDate(waybillDate);
-        
+
         // CRITICAL: Normalize the date for consistent storage and comparison
         let normalizedWaybillDate = null;
         if (waybillDate) {
@@ -744,14 +762,56 @@ const CustomerAnalysisPage = () => {
             normalizedWaybillDate = parseExcelDate(waybillDate);
           }
         }
-        
+
         const customerId = (wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || '').trim();
         const customerName = (wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || '').trim();
-        
+
+        // DIAGNOSTIC: Track name extraction results
+        diagnostics.totalProcessed++;
+
+        const diagnosticEntry = {
+          waybillId: wb.ID || wb.id || 'unknown',
+          date: normalizedWaybillDate,
+          extractedId: customerId,
+          extractedName: customerName,
+          rawBuyerTin: wb.BUYER_TIN || wb.buyer_tin || wb.BuyerTin || null,
+          rawBuyerName: wb.BUYER_NAME || wb.buyer_name || wb.BuyerName || null,
+          isAfterCutoff,
+          validationStatus: 'unknown'
+        };
+
+        // Validate the extracted data
+        if (!customerName) {
+          diagnosticEntry.validationStatus = 'empty_name';
+          diagnosticEntry.issue = 'BUYER_NAME field is empty or missing';
+          diagnostics.emptyNames.push(diagnosticEntry);
+        } else if (isNameActuallyId(customerName)) {
+          diagnosticEntry.validationStatus = 'id_as_name';
+          diagnosticEntry.issue = 'BUYER_NAME contains ID (9 or 11 digits) instead of actual name';
+          diagnostics.idAsName.push(diagnosticEntry);
+        } else if (!customerId) {
+          diagnosticEntry.validationStatus = 'missing_id';
+          diagnosticEntry.issue = 'BUYER_TIN field is empty or missing';
+          diagnostics.invalidNames.push(diagnosticEntry);
+        } else {
+          diagnosticEntry.validationStatus = 'valid';
+          diagnostics.validNames.push(diagnosticEntry);
+        }
+
+        // Store raw samples (first 10 of each type)
+        if (diagnostics.rawSamples.length < 50) {
+          diagnostics.rawSamples.push({
+            ...diagnosticEntry,
+            allBuyerFields: Object.entries(wb)
+              .filter(([key]) => key.toLowerCase().includes('buyer') || key.toLowerCase().includes('tin') || key.toLowerCase().includes('name'))
+              .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {})
+          });
+        }
+
         // Auto-create customer if new customer with valid name is found
-        if (customerId && customerName && isAfterCutoff) {
+        if (customerId && customerName && isAfterCutoff && !isNameActuallyId(customerName)) {
           // Non-blocking customer creation - don't await to avoid slowing down waybill processing
-          autoCreateCustomer(customerId, customerName).catch(err => 
+          autoCreateCustomer(customerId, customerName).catch(err =>
             console.warn(`Failed to auto-create customer ${customerId}:`, err)
           );
         }
@@ -768,9 +828,12 @@ const CustomerAnalysisPage = () => {
         };
       });
 
+    // Update diagnostics state
+    setWaybillDiagnostics(diagnostics);
+
     performanceMonitor.end('extract-waybills');
     return processedWaybills;
-  }, [isAfterCutoffDate, autoCreateCustomer, parseExcelDate]);
+  }, [isAfterCutoffDate, autoCreateCustomer, parseExcelDate, isNameActuallyId]);
 
   const fetchWaybills = useCallback(async () => {
     if (!dateRange.startDate || !dateRange.endDate) {
@@ -2055,6 +2118,230 @@ const CustomerAnalysisPage = () => {
         {/* Transaction Analysis Summary */}
         {transactionSummary && (
           <TransactionSummaryPanel transactionSummary={transactionSummary} />
+        )}
+
+        {/* Waybill Data Extraction Diagnostic Section */}
+        {waybillDiagnostics.totalProcessed > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold mb-4 text-gray-700">
+              📋 ზედდებულების მონაცემთა ამოღების დიაგნოსტიკა
+            </h3>
+
+            {/* Summary Statistics */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+              <div className="bg-gray-50 border border-gray-300 rounded p-3">
+                <div className="text-xs text-gray-600 font-medium">სულ დამუშავებული</div>
+                <div className="text-2xl font-bold text-gray-900">{waybillDiagnostics.totalProcessed}</div>
+              </div>
+              <div className="bg-green-50 border border-green-300 rounded p-3">
+                <div className="text-xs text-green-700 font-medium">✅ ვალიდური</div>
+                <div className="text-2xl font-bold text-green-900">{waybillDiagnostics.validNames.length}</div>
+                <div className="text-xs text-green-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.validNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-red-50 border border-red-300 rounded p-3">
+                <div className="text-xs text-red-700 font-medium">🔴 ID როგორც სახელი</div>
+                <div className="text-2xl font-bold text-red-900">{waybillDiagnostics.idAsName.length}</div>
+                <div className="text-xs text-red-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.idAsName.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-yellow-50 border border-yellow-300 rounded p-3">
+                <div className="text-xs text-yellow-700 font-medium">⚠️ ცარიელი სახელი</div>
+                <div className="text-2xl font-bold text-yellow-900">{waybillDiagnostics.emptyNames.length}</div>
+                <div className="text-xs text-yellow-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.emptyNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+              <div className="bg-orange-50 border border-orange-300 rounded p-3">
+                <div className="text-xs text-orange-700 font-medium">⚠️ ცარიელი ID</div>
+                <div className="text-2xl font-bold text-orange-900">{waybillDiagnostics.invalidNames.length}</div>
+                <div className="text-xs text-orange-600 mt-1">
+                  {waybillDiagnostics.totalProcessed > 0
+                    ? `${((waybillDiagnostics.invalidNames.length / waybillDiagnostics.totalProcessed) * 100).toFixed(1)}%`
+                    : '0%'}
+                </div>
+              </div>
+            </div>
+
+            {/* ID as Name Section */}
+            {waybillDiagnostics.idAsName.length > 0 && (
+              <div className="mb-6 bg-red-50 border border-red-300 rounded-lg p-4">
+                <h4 className="text-sm font-bold text-red-800 mb-3">
+                  🔴 CRITICAL: ზედდებულები, სადაც BUYER_NAME შეიცავს ID-ს სახელის ნაცვლად ({waybillDiagnostics.idAsName.length})
+                </h4>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {waybillDiagnostics.idAsName.slice(0, 20).map((item, idx) => (
+                    <div key={idx} className="bg-white border border-red-200 rounded p-3 text-xs">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-gray-600 font-medium">ზედდებულის ID:</span>{' '}
+                          <span className="font-mono text-gray-900">{item.waybillId}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 font-medium">თარიღი:</span>{' '}
+                          <span className="text-gray-900">{item.date || 'N/A'}</span>
+                        </div>
+                        <div className="col-span-2 border-t pt-2">
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">Raw BUYER_TIN:</span>{' '}
+                            <span className="font-mono text-blue-700">{item.rawBuyerTin || 'null'}</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">Raw BUYER_NAME:</span>{' '}
+                            <span className="font-mono text-red-700 font-bold">{item.rawBuyerName || 'null'}</span>
+                            <span className="ml-2 px-2 py-0.5 bg-red-600 text-white text-xs rounded">⚠️ ეს არის ID!</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">→ ამოღებული customerId:</span>{' '}
+                            <span className="font-mono text-blue-900">{item.extractedId}</span>
+                          </div>
+                          <div className="mb-1">
+                            <span className="text-gray-600 font-medium">→ ამოღებული customerName:</span>{' '}
+                            <span className="font-mono text-red-900 font-bold">{item.extractedName}</span>
+                          </div>
+                          <div className="mt-2 p-2 bg-red-100 rounded">
+                            <span className="text-red-800 font-medium">🔴 პრობლემა:</span>{' '}
+                            <span className="text-red-700">{item.issue}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {waybillDiagnostics.idAsName.length > 20 && (
+                    <div className="text-center text-sm text-gray-600 py-2">
+                      ... და კიდევ {waybillDiagnostics.idAsName.length - 20} ზედდებული
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Empty Names Section */}
+            {waybillDiagnostics.emptyNames.length > 0 && (
+              <div className="mb-6 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
+                <h4 className="text-sm font-bold text-yellow-800 mb-3">
+                  ⚠️ ზედდებულები ცარიელი BUYER_NAME ველით ({waybillDiagnostics.emptyNames.length})
+                </h4>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {waybillDiagnostics.emptyNames.slice(0, 10).map((item, idx) => (
+                    <div key={idx} className="bg-white border border-yellow-200 rounded p-2 text-xs flex justify-between items-center">
+                      <div>
+                        <span className="text-gray-600">ზ/დ ID:</span>{' '}
+                        <span className="font-mono">{item.waybillId}</span>
+                        <span className="ml-3 text-gray-600">თარიღი:</span>{' '}
+                        <span>{item.date || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">BUYER_TIN:</span>{' '}
+                        <span className="font-mono text-blue-700">{item.extractedId || 'null'}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {waybillDiagnostics.emptyNames.length > 10 && (
+                    <div className="text-center text-sm text-gray-600">
+                      ... და კიდევ {waybillDiagnostics.emptyNames.length - 10}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Raw Sample Data */}
+            <details className="border border-gray-300 rounded-lg">
+              <summary className="cursor-pointer p-3 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium text-gray-700">
+                🔍 Raw დეტალური მონაცემები (პირველი {Math.min(10, waybillDiagnostics.rawSamples.length)} ზედდებული)
+              </summary>
+              <div className="p-4 space-y-4 max-h-96 overflow-y-auto">
+                {waybillDiagnostics.rawSamples.slice(0, 10).map((sample, idx) => (
+                  <div key={idx} className={`border rounded p-3 text-xs ${
+                    sample.validationStatus === 'valid' ? 'border-green-300 bg-green-50' :
+                    sample.validationStatus === 'id_as_name' ? 'border-red-300 bg-red-50' :
+                    sample.validationStatus === 'empty_name' ? 'border-yellow-300 bg-yellow-50' :
+                    'border-orange-300 bg-orange-50'
+                  }`}>
+                    <div className="font-bold mb-2 flex items-center justify-between">
+                      <span>ზედდებული #{idx + 1}: {sample.waybillId}</span>
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        sample.validationStatus === 'valid' ? 'bg-green-600 text-white' :
+                        sample.validationStatus === 'id_as_name' ? 'bg-red-600 text-white' :
+                        sample.validationStatus === 'empty_name' ? 'bg-yellow-600 text-white' :
+                        'bg-orange-600 text-white'
+                      }`}>
+                        {sample.validationStatus === 'valid' ? '✅ ვალიდური' :
+                         sample.validationStatus === 'id_as_name' ? '🔴 ID როგორც სახელი' :
+                         sample.validationStatus === 'empty_name' ? '⚠️ ცარიელი სახელი' :
+                         '⚠️ ცარიელი ID'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 font-mono">
+                      <div className="grid grid-cols-2 gap-2 mb-2 pb-2 border-b">
+                        <div>
+                          <span className="text-gray-600">თარიღი:</span> {sample.date || 'N/A'}
+                        </div>
+                        <div>
+                          <span className="text-gray-600">After Cutoff:</span> {sample.isAfterCutoff ? '✅' : '❌'}
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-2 rounded">
+                        <div className="font-bold text-blue-800 mb-1">📥 ამოღებული მონაცემები:</div>
+                        <div><span className="text-gray-600">customerId:</span> <span className="text-blue-900">{sample.extractedId || '❌ null'}</span></div>
+                        <div>
+                          <span className="text-gray-600">customerName:</span>{' '}
+                          <span className={sample.validationStatus === 'id_as_name' ? 'text-red-900 font-bold' : 'text-green-900'}>
+                            {sample.extractedName || '❌ null'}
+                          </span>
+                          {sample.validationStatus === 'id_as_name' && (
+                            <span className="ml-2 text-red-700 font-bold">← ⚠️ ეს არის ID!</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-100 p-2 rounded mt-2">
+                        <div className="font-bold text-purple-800 mb-1">📄 Raw API ველები:</div>
+                        {Object.entries(sample.allBuyerFields).map(([key, value]) => (
+                          <div key={key} className="pl-2">
+                            <span className="text-purple-700">{key}:</span>{' '}
+                            <span className={key.toLowerCase().includes('name') && sample.validationStatus === 'id_as_name'
+                              ? 'text-red-900 font-bold'
+                              : 'text-gray-800'
+                            }>
+                              {typeof value === 'object' ? JSON.stringify(value) : (value || 'null')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {sample.issue && (
+                        <div className="bg-red-100 p-2 rounded mt-2">
+                          <span className="text-red-800 font-bold">⚠️ პრობლემა:</span>{' '}
+                          <span className="text-red-700">{sample.issue}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+
+            {/* Success Message */}
+            {waybillDiagnostics.idAsName.length === 0 && waybillDiagnostics.emptyNames.length === 0 && (
+              <div className="mt-4 bg-green-50 border border-green-300 rounded p-4 text-center">
+                <div className="text-green-800 font-medium">
+                  ✅ ყველა ზედდებულში სახელები სწორად არის ამოღებული!
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Customer Name Resolution Diagnostic Section */}
