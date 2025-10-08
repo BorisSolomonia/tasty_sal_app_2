@@ -47,43 +47,61 @@ const InventoryManagementPage = () => {
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [showResults, setShowResults] = useState(false);
 
-  // Filter orders by cutoff date (after April 29, 2024)
-  const isAfterCutoffDate = useCallback((dateString) => {
-    if (!dateString) return false;
+  // Convert Firebase Timestamp or various date formats to YYYY-MM-DD string
+  const normalizeDateToString = useCallback((dateValue) => {
+    if (!dateValue) return '';
 
-    // Parse date string to YYYY-MM-DD format
-    let normalizedDate = dateString;
-    if (dateString.includes('T')) {
-      normalizedDate = dateString.split('T')[0];
-    } else if (dateString.includes(' ')) {
-      normalizedDate = dateString.split(' ')[0];
+    // Handle Firebase Timestamp
+    if (dateValue.toDate && typeof dateValue.toDate === 'function') {
+      const date = dateValue.toDate();
+      return date.toISOString().split('T')[0];
     }
 
-    // Ensure YYYY-MM-DD format
-    const parts = normalizedDate.split(/[-/]/);
-    if (parts.length === 3) {
-      const [y, m, d] = parts;
-      if (y.length === 4) {
-        normalizedDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    // Handle Date object
+    if (dateValue instanceof Date) {
+      return dateValue.toISOString().split('T')[0];
+    }
+
+    // Handle string
+    if (typeof dateValue === 'string') {
+      let normalizedDate = dateValue;
+      if (dateValue.includes('T')) {
+        normalizedDate = dateValue.split('T')[0];
+      } else if (dateValue.includes(' ')) {
+        normalizedDate = dateValue.split(' ')[0];
       }
+
+      // Ensure YYYY-MM-DD format
+      const parts = normalizedDate.split(/[-/]/);
+      if (parts.length === 3) {
+        const [y, m, d] = parts;
+        if (y.length === 4) {
+          normalizedDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+      }
+
+      return normalizedDate;
     }
 
-    return normalizedDate > CUTOFF_DATE;
+    return '';
   }, []);
 
-  // Check if date is in selected range
-  const isInDateRange = useCallback((dateString) => {
-    if (!dateString || !startDate || !endDate) return false;
+  // Filter orders by cutoff date (after April 29, 2024)
+  const isAfterCutoffDate = useCallback((dateValue) => {
+    const normalizedDate = normalizeDateToString(dateValue);
+    if (!normalizedDate) return false;
+    return normalizedDate > CUTOFF_DATE;
+  }, [normalizeDateToString]);
 
-    let normalizedDate = dateString;
-    if (dateString.includes('T')) {
-      normalizedDate = dateString.split('T')[0];
-    } else if (dateString.includes(' ')) {
-      normalizedDate = dateString.split(' ')[0];
-    }
+  // Check if date is in selected range
+  const isInDateRange = useCallback((dateValue) => {
+    if (!startDate || !endDate) return false;
+
+    const normalizedDate = normalizeDateToString(dateValue);
+    if (!normalizedDate) return false;
 
     return normalizedDate >= startDate && normalizedDate <= endDate;
-  }, [startDate, endDate]);
+  }, [startDate, endDate, normalizeDateToString]);
 
   // Calculate inventory from Firebase orders
   const inventoryData = useMemo(() => {
@@ -113,10 +131,20 @@ const InventoryManagementPage = () => {
     orders.forEach((order, index) => {
       const orderDate = order.OrderDate || order.orderDate || '';
 
+      // Debug first few orders to see date format
+      if (index < 3) {
+        console.log(`🔍 Order #${index}:`, {
+          rawDate: orderDate,
+          dateType: typeof orderDate,
+          normalizedDate: normalizeDateToString(orderDate),
+          isAfterCutoff: isAfterCutoffDate(orderDate)
+        });
+      }
+
       // Skip if before cutoff date
       if (!isAfterCutoffDate(orderDate)) {
         if (index < 5) {
-          console.log(`⏭️ Skipping order before cutoff: Date=${orderDate}`);
+          console.log(`⏭️ Skipping order before cutoff: Date=${normalizeDateToString(orderDate)}`);
         }
         skippedBeforeCutoff++;
         return;
