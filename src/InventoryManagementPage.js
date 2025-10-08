@@ -108,8 +108,29 @@ const InventoryManagementPage = () => {
   }, []);
 
   // Extract products from waybill items with comprehensive field mapping
-  const extractProductsFromWaybill = useCallback((waybill) => {
+  const extractProductsFromWaybill = useCallback((waybill, waybillIndex) => {
     const products = [];
+
+    // Debug first 3 waybills to see structure
+    if (waybillIndex < 3) {
+      console.log(`🔍 WAYBILL STRUCTURE #${waybillIndex}:`, {
+        keys: Object.keys(waybill),
+        sample: {
+          PROD_ITEMS: waybill.PROD_ITEMS,
+          ITEMS: waybill.ITEMS,
+          Items: waybill.Items,
+          prod_items: waybill.prod_items,
+          items: waybill.items,
+          PRODUCTS: waybill.PRODUCTS,
+          products: waybill.products,
+          // Also check other possible keys
+          WAYBILL_ITEMS: waybill.WAYBILL_ITEMS,
+          waybill_items: waybill.waybill_items,
+          INVOICE_ITEMS: waybill.INVOICE_ITEMS,
+          invoice_items: waybill.invoice_items,
+        }
+      });
+    }
 
     // Check multiple possible product list locations
     const productSources = [
@@ -120,21 +141,34 @@ const InventoryManagementPage = () => {
       waybill.items?.item,
       waybill.PRODUCTS?.PRODUCT,
       waybill.products?.product,
+      waybill.WAYBILL_ITEMS?.WAYBILL_ITEM,
+      waybill.waybill_items?.waybill_item,
+      waybill.INVOICE_ITEMS?.INVOICE_ITEM,
+      waybill.invoice_items?.invoice_item,
+      // Direct arrays
+      waybill.PROD_ITEMS,
+      waybill.ITEMS,
+      waybill.items,
+      waybill.prod_items,
+      waybill.products,
+      waybill.PRODUCTS,
     ];
 
     for (const source of productSources) {
       if (source) {
         const items = Array.isArray(source) ? source : [source];
+        let validItems = 0;
+
         items.forEach(item => {
-          if (item) {
+          if (item && typeof item === 'object') {
             // Extract product information with multiple field fallbacks
             const product = {
-              code: item.PROD_CODE || item.prod_code || item.BARCODE || item.barcode || item.CODE || item.code || 'N/A',
-              name: item.PROD_NAME || item.prod_name || item.NAME || item.name || item.DESCRIPTION || item.description || 'უცნობი პროდუქტი',
-              unit: item.UNIT || item.unit || item.MEASURE_UNIT || item.measure_unit || 'ცალი',
-              quantity: parseFloat(item.QUANTITY || item.quantity || item.QTY || item.qty || 0),
-              price: parseFloat(item.PRICE || item.price || item.UNIT_PRICE || item.unit_price || 0),
-              amount: parseFloat(item.AMOUNT || item.amount || item.TOTAL || item.total || 0),
+              code: item.PROD_CODE || item.prod_code || item.BARCODE || item.barcode || item.CODE || item.code || item.ProductCode || item.productCode || 'N/A',
+              name: item.PROD_NAME || item.prod_name || item.NAME || item.name || item.DESCRIPTION || item.description || item.ProductName || item.productName || 'უცნობი პროდუქტი',
+              unit: item.UNIT || item.unit || item.MEASURE_UNIT || item.measure_unit || item.UnitOfMeasure || item.unitOfMeasure || 'ცალი',
+              quantity: parseFloat(item.QUANTITY || item.quantity || item.QTY || item.qty || item.Quantity || item.Amount || item.amount || 0),
+              price: parseFloat(item.PRICE || item.price || item.UNIT_PRICE || item.unit_price || item.UnitPrice || item.unitPrice || 0),
+              amount: parseFloat(item.AMOUNT || item.amount || item.TOTAL || item.total || item.TotalAmount || item.totalAmount || 0),
             };
 
             // If amount is 0 but we have quantity and price, calculate it
@@ -142,11 +176,24 @@ const InventoryManagementPage = () => {
               product.amount = product.quantity * product.price;
             }
 
-            products.push(product);
+            // Only add if we have at least name and quantity
+            if (product.name !== 'უცნობი პროდუქტი' && product.quantity > 0) {
+              products.push(product);
+              validItems++;
+            }
           }
         });
-        break; // Stop after finding first valid source
+
+        if (validItems > 0 && waybillIndex < 3) {
+          console.log(`✅ Found ${validItems} valid items in source, total products: ${products.length}`);
+        }
+
+        if (products.length > 0) break; // Stop after finding first valid source
       }
+    }
+
+    if (waybillIndex < 3 && products.length === 0) {
+      console.log(`⚠️ No products extracted from waybill #${waybillIndex}`);
     }
 
     return products;
@@ -202,7 +249,7 @@ const InventoryManagementPage = () => {
         return;
       }
 
-      const products = extractProductsFromWaybill(waybill);
+      const products = extractProductsFromWaybill(waybill, index);
 
       if (index < 3 && products.length > 0) {
         console.log(`🟡 Purchased waybill ${index + 1}: ${products.length} products, Date=${waybillDate}`);
@@ -246,7 +293,7 @@ const InventoryManagementPage = () => {
         return;
       }
 
-      const products = extractProductsFromWaybill(waybill);
+      const products = extractProductsFromWaybill(waybill, index);
 
       if (index < 3 && products.length > 0) {
         console.log(`🔵 Sold waybill ${index + 1}: ${products.length} products, Date=${waybillDate}`);
