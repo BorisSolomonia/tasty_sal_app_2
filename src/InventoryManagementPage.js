@@ -1,21 +1,41 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useReducer, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { useData } from './App';
+import {
+  extractWaybillsFromResponse,
+  calculateWaybillCount,
+  generateCacheKey,
+} from './utils/rsWaybills';
+
+// API Base URL configuration (same as RSApiManagementPage)
+const API_BASE_URL = process.env.REACT_APP_API_URL
+  ? process.env.REACT_APP_API_URL
+  : (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3005');
 
 // Inventory cutoff date - after April 29th, 2024 (so April 30th onwards)
 const CUTOFF_DATE = '2024-04-29';
+
+// Action type constants
+const ACTION_TYPES = {
+  SET_LOADING: 'SET_LOADING',
+  SET_ERROR: 'SET_ERROR',
+  SET_SOLD_WAYBILLS: 'SET_SOLD_WAYBILLS',
+  SET_PURCHASED_WAYBILLS: 'SET_PURCHASED_WAYBILLS',
+  SET_LOADING_OP: 'SET_LOADING_OP',
+};
 
 // Translations
 const translations = {
   inventoryManagement: "ინვენტარიზაციის მართვა",
   startDate: "დასაწყისი თარიღი",
   endDate: "დასასრულის თარიღი",
-  calculate: "გამოთვლა",
+  loadData: "მონაცემების ჩატვირთვა",
+  loading: "იტვირთება...",
+  calculating: "ითვლება...",
   exportToExcel: "Excel-ში გატანა",
   clear: "გასუფთავება",
   productName: "პროდუქტის დასახელება",
-  productCode: "პროდუქტის კოდი (SKU)",
-  unitPrice: "ერთ. ფასი",
+  productCode: "პროდუქტის კოდი",
+  unitMeasure: "ერთეული",
   purchased: "შესყიდული",
   sold: "გაყიდული",
   inventory: "ინვენტარიზაცია",
@@ -26,6 +46,7 @@ const translations = {
   totalSales: "სულ გაყიდვები",
   totalInventory: "სულ ინვენტარი",
   noData: "მონაცემები არ არის",
+  dateRangeError: "დასაწყისი თარიღი უნდა იყოს დასასრულამდე ან მის ტოლი",
   inventorySummary: "ინვენტარის შეჯამება",
   period: "პერიოდი",
   items: "პოზიცია",
@@ -34,192 +55,272 @@ const translations = {
   avgPurchasePrice: "საშ. შესყიდვის ფასი",
   avgSalePrice: "საშ. გაყიდვის ფასი",
   cutoffNote: "* ინვენტარიზაცია ითვლება 2024 წლის 30 აპრილიდან",
-  dataSource: "მონაცემთა წყარო: Firebase შეკვეთები",
-  ordersProcessed: "დამუშავებული შეკვეთები",
+  dataSource: "მონაცემთა წყარო: RS.ge API ზედდებულები",
+  fetchingWaybills: "ზედდებულების ჩამოტვირთვა",
+  fetchingDetails: "დეტალების ჩამოტვირთვა",
+  waybillsLoaded: "ზედდებული ჩაიტვირთა",
+  processingProducts: "პროდუქტების დამუშავება",
+};
+
+const initialState = {
+  loading: false,
+  error: '',
+  soldWaybills: [],
+  purchasedWaybills: [],
+  loadingOperations: {},
+};
+
+const reducer = (state, action) => {
+  switch (action.type) {
+    case ACTION_TYPES.SET_LOADING:
+      return { ...state, loading: action.payload };
+    case ACTION_TYPES.SET_ERROR:
+      return { ...state, error: action.payload };
+    case ACTION_TYPES.SET_SOLD_WAYBILLS:
+      return { ...state, soldWaybills: action.payload };
+    case ACTION_TYPES.SET_PURCHASED_WAYBILLS:
+      return { ...state, purchasedWaybills: action.payload };
+    case ACTION_TYPES.SET_LOADING_OP:
+      return { ...state, loadingOperations: { ...state.loadingOperations, [action.op]: action.payload } };
+    default:
+      return state;
+  }
 };
 
 const InventoryManagementPage = () => {
-  // Get orders and products from Firebase
-  const { orders = [], products = [] } = useData();
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const { loading, error, soldWaybills, purchasedWaybills, loadingOperations } = state;
+
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('');
+
+  // AbortController refs for per-operation cancellation
+  const abortControllersRef = useRef(new Map());
+
+  // Simple cache for waybills API calls
+  const [apiCache, setApiCache] = useState({});
 
   // Form states with cutoff date as default start
   const [startDate, setStartDate] = useState(CUTOFF_DATE);
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [showResults, setShowResults] = useState(false);
 
-  // Convert Firebase Timestamp or various date formats to YYYY-MM-DD string
-  const normalizeDateToString = useCallback((dateValue) => {
-    if (!dateValue) return '';
-
-    // Handle Firebase Timestamp
-    if (dateValue.toDate && typeof dateValue.toDate === 'function') {
-      const date = dateValue.toDate();
-      return date.toISOString().split('T')[0];
-    }
-
-    // Handle Date object
-    if (dateValue instanceof Date) {
-      return dateValue.toISOString().split('T')[0];
-    }
-
-    // Handle string
-    if (typeof dateValue === 'string') {
-      let normalizedDate = dateValue;
-      if (dateValue.includes('T')) {
-        normalizedDate = dateValue.split('T')[0];
-      } else if (dateValue.includes(' ')) {
-        normalizedDate = dateValue.split(' ')[0];
-      }
-
-      // Ensure YYYY-MM-DD format
-      const parts = normalizedDate.split(/[-/]/);
-      if (parts.length === 3) {
-        const [y, m, d] = parts;
-        if (y.length === 4) {
-          normalizedDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-        }
-      }
-
-      return normalizedDate;
-    }
-
-    return '';
+  // Clean up abort controllers on unmount
+  useEffect(() => {
+    const controllers = abortControllersRef.current;
+    return () => {
+      controllers.forEach(controller => controller.abort());
+      controllers.clear();
+    };
   }, []);
 
-  // Filter orders by cutoff date (after April 29, 2024)
-  const isAfterCutoffDate = useCallback((dateValue) => {
-    const normalizedDate = normalizeDateToString(dateValue);
-    if (!normalizedDate) return false;
+  // Filter waybills by cutoff date (after April 29, 2024)
+  const isAfterCutoffDate = useCallback((dateString) => {
+    if (!dateString) return false;
+
+    // Parse date string to YYYY-MM-DD format
+    let normalizedDate = dateString;
+    if (dateString.includes('T')) {
+      normalizedDate = dateString.split('T')[0];
+    } else if (dateString.includes(' ')) {
+      normalizedDate = dateString.split(' ')[0];
+    }
+
+    // Ensure YYYY-MM-DD format
+    const parts = normalizedDate.split(/[-/]/);
+    if (parts.length === 3) {
+      const [y, m, d] = parts;
+      if (y.length === 4) {
+        normalizedDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
+    }
+
     return normalizedDate > CUTOFF_DATE;
-  }, [normalizeDateToString]);
+  }, []);
 
-  // Check if date is in selected range
-  const isInDateRange = useCallback((dateValue) => {
-    if (!startDate || !endDate) return false;
+  // Extract products from waybill detail response
+  const extractProductsFromWaybillDetail = useCallback((waybillDetail) => {
+    const products = [];
 
-    const normalizedDate = normalizeDateToString(dateValue);
-    if (!normalizedDate) return false;
+    if (!waybillDetail || !waybillDetail.data) {
+      return products;
+    }
 
-    return normalizedDate >= startDate && normalizedDate <= endDate;
-  }, [startDate, endDate, normalizeDateToString]);
+    const data = waybillDetail.data;
 
-  // Calculate inventory from Firebase orders
+    // Check multiple possible product list locations in the detail response
+    const productSources = [
+      data.PROD_ITEMS?.PROD_ITEM,
+      data.ITEMS?.ITEM,
+      data.Items?.Item,
+      data.prod_items?.prod_item,
+      data.items?.item,
+      data.PRODUCTS?.PRODUCT,
+      data.products?.product,
+      data.WAYBILL?.PROD_ITEMS?.PROD_ITEM,
+      data.WAYBILL?.ITEMS?.ITEM,
+      data.waybill?.PROD_ITEMS?.PROD_ITEM,
+      data.waybill?.ITEMS?.ITEM,
+    ];
+
+    for (const source of productSources) {
+      if (source) {
+        const items = Array.isArray(source) ? source : [source];
+
+        items.forEach(item => {
+          if (item && typeof item === 'object') {
+            // Extract product information with multiple field fallbacks
+            const product = {
+              code: item.PROD_CODE || item.prod_code || item.BARCODE || item.barcode || item.CODE || item.code || 'N/A',
+              name: item.PROD_NAME || item.prod_name || item.NAME || item.name || item.DESCRIPTION || item.description || 'უცნობი პროდუქტი',
+              unit: item.UNIT || item.unit || item.MEASURE_UNIT || item.measure_unit || 'ცალი',
+              quantity: parseFloat(item.QUANTITY || item.quantity || item.QTY || item.qty || 0),
+              price: parseFloat(item.PRICE || item.price || item.UNIT_PRICE || item.unit_price || 0),
+              amount: parseFloat(item.AMOUNT || item.amount || item.TOTAL || item.total || 0),
+            };
+
+            // If amount is 0 but we have quantity and price, calculate it
+            if (product.amount === 0 && product.quantity > 0 && product.price > 0) {
+              product.amount = product.quantity * product.price;
+            }
+
+            // Only add if we have at least name and quantity
+            if (product.name !== 'უცნობი პროდუქტი' && product.quantity > 0) {
+              products.push(product);
+            }
+          }
+        });
+
+        if (products.length > 0) break; // Stop after finding first valid source
+      }
+    }
+
+    return products;
+  }, []);
+
+  // Calculate inventory from waybills (same logic as VAT calculation)
   const inventoryData = useMemo(() => {
-    if (!showResults) return null;
+    if (inventoryLoading) return null;
 
-    console.log('📦 INVENTORY CALCULATION START (Firebase Orders)');
-    console.log(`📋 Total orders in Firebase: ${orders.length}`);
-    console.log(`📦 Total products in Firebase: ${products.length}`);
+    if (soldWaybills.length === 0 && purchasedWaybills.length === 0) {
+      return {
+        products: [],
+        summary: {
+          totalPurchased: 0,
+          totalSold: 0,
+          totalInventory: 0,
+          totalPurchaseAmount: 0,
+          totalSalesAmount: 0,
+          totalInventoryValue: 0,
+          soldWaybillsCount: 0,
+          purchasedWaybillsCount: 0
+        }
+      };
+    }
+
+    console.log('📦 INVENTORY CALCULATION START (RS.ge Waybills)');
+    console.log(`🔵 Processing ${soldWaybills.length} sold waybills`);
+    console.log(`🟡 Processing ${purchasedWaybills.length} purchased waybills`);
 
     const productMap = new Map();
-    let processedOrders = 0;
-    let skippedBeforeCutoff = 0;
-    let skippedOutsideRange = 0;
 
-    // Create product lookup map
-    const productLookup = new Map();
-    products.forEach(p => {
-      if (p.ProductSKU) {
-        productLookup.set(p.ProductSKU, {
-          name: p.ProductName || 'უცნობი პროდუქტი',
-          price: parseFloat(p.UnitPrice || 0)
-        });
-      }
-    });
+    // Process purchased waybills (incoming inventory)
+    let purchasedAfterCutoff = 0;
+    purchasedWaybills.forEach((waybill, index) => {
+      const waybillDate = waybill.CREATE_DATE || waybill.create_date || waybill.date || '';
 
-    // Process all orders
-    orders.forEach((order, index) => {
-      const orderDate = order.OrderDate || order.orderDate || '';
-
-      // Debug first few orders to see date format
-      if (index < 3) {
-        console.log(`🔍 Order #${index}:`, {
-          rawDate: orderDate,
-          dateType: typeof orderDate,
-          normalizedDate: normalizeDateToString(orderDate),
-          isAfterCutoff: isAfterCutoffDate(orderDate)
-        });
-      }
-
-      // Skip if before cutoff date
-      if (!isAfterCutoffDate(orderDate)) {
+      // Only include waybills after cutoff date
+      if (!isAfterCutoffDate(waybillDate)) {
         if (index < 5) {
-          console.log(`⏭️ Skipping order before cutoff: Date=${normalizeDateToString(orderDate)}`);
+          console.log(`⏭️ Skipping purchased waybill before cutoff: Date=${waybillDate}`);
         }
-        skippedBeforeCutoff++;
         return;
       }
 
-      // Skip if outside selected date range
-      if (!isInDateRange(orderDate)) {
-        skippedOutsideRange++;
-        return;
+      purchasedAfterCutoff++;
+
+      // Get products from waybill (if available in the waybill list response)
+      const products = extractProductsFromWaybillDetail(waybill);
+
+      if (index < 3) {
+        console.log(`🟡 Purchased waybill ${index + 1}: Date=${waybillDate}, Products found: ${products.length}`);
       }
 
-      processedOrders++;
+      products.forEach(product => {
+        const key = `${product.code}_${product.name}`;
 
-      const sku = order.ProductSKU || order.productSKU;
-      const quantity = parseFloat(order.Quantity || order.quantity || 0);
-      const unitPrice = parseFloat(order.UnitPrice || order.unitPrice || 0);
-      const totalPrice = parseFloat(order.TotalPrice || order.totalPrice || unitPrice * quantity);
-
-      if (!sku || quantity === 0) {
-        return;
-      }
-
-      // Get product info from lookup or order
-      const productInfo = productLookup.get(sku) || {
-        name: order.ProductName || order.productName || 'უცნობი პროდუქტი',
-        price: unitPrice
-      };
-
-      const key = `${sku}_${productInfo.name}`;
-
-      if (!productMap.has(key)) {
-        productMap.set(key, {
-          code: sku,
-          name: productInfo.name,
-          purchased: 0,
-          sold: 0,
-          purchaseAmount: 0,
-          salesAmount: 0,
-          purchasePrices: [],
-          salePrices: [],
-        });
-      }
-
-      const existing = productMap.get(key);
-
-      // Determine if this is a purchase or sale based on order fields
-      // Orders with 'forPurchase' flag or 'Purchase Manager' assigned are purchases
-      const isPurchase = order.forPurchase === true ||
-                         order.ForPurchase === true ||
-                         order.assignedForPurchase === true ||
-                         order.Status === 'For Purchase' ||
-                         order.status === 'For Purchase';
-
-      if (isPurchase) {
-        existing.purchased += quantity;
-        existing.purchaseAmount += totalPrice;
-        if (unitPrice > 0) {
-          existing.purchasePrices.push(unitPrice);
+        if (!productMap.has(key)) {
+          productMap.set(key, {
+            code: product.code,
+            name: product.name,
+            unit: product.unit,
+            purchased: 0,
+            sold: 0,
+            purchaseAmount: 0,
+            salesAmount: 0,
+            purchasePrices: [],
+            salePrices: [],
+          });
         }
-      } else {
-        // Default: treat as sale
-        existing.sold += quantity;
-        existing.salesAmount += totalPrice;
-        if (unitPrice > 0) {
-          existing.salePrices.push(unitPrice);
+
+        const existing = productMap.get(key);
+        existing.purchased += product.quantity;
+        existing.purchaseAmount += product.amount;
+        if (product.price > 0) {
+          existing.purchasePrices.push(product.price);
         }
-      }
+      });
     });
 
-    console.log(`✅ Processed ${processedOrders} orders`);
-    console.log(`⏭️ Skipped ${skippedBeforeCutoff} orders before cutoff`);
-    console.log(`⏭️ Skipped ${skippedOutsideRange} orders outside date range`);
+    // Process sold waybills (outgoing inventory)
+    let soldAfterCutoff = 0;
+    soldWaybills.forEach((waybill, index) => {
+      const waybillDate = waybill.CREATE_DATE || waybill.create_date || waybill.date || '';
+
+      // Only include waybills after cutoff date
+      if (!isAfterCutoffDate(waybillDate)) {
+        if (index < 5) {
+          console.log(`⏭️ Skipping sold waybill before cutoff: Date=${waybillDate}`);
+        }
+        return;
+      }
+
+      soldAfterCutoff++;
+
+      // Get products from waybill (if available in the waybill list response)
+      const products = extractProductsFromWaybillDetail(waybill);
+
+      if (index < 3) {
+        console.log(`🔵 Sold waybill ${index + 1}: Date=${waybillDate}, Products found: ${products.length}`);
+      }
+
+      products.forEach(product => {
+        const key = `${product.code}_${product.name}`;
+
+        if (!productMap.has(key)) {
+          productMap.set(key, {
+            code: product.code,
+            name: product.name,
+            unit: product.unit,
+            purchased: 0,
+            sold: 0,
+            purchaseAmount: 0,
+            salesAmount: 0,
+            purchasePrices: [],
+            salePrices: [],
+          });
+        }
+
+        const existing = productMap.get(key);
+        existing.sold += product.quantity;
+        existing.salesAmount += product.amount;
+        if (product.price > 0) {
+          existing.salePrices.push(product.price);
+        }
+      });
+    });
 
     // Calculate inventory and averages
-    const productsArray = Array.from(productMap.values()).map(product => {
+    const products = Array.from(productMap.values()).map(product => {
       const inventory = product.purchased - product.sold;
       const avgPurchasePrice = product.purchasePrices.length > 0
         ? product.purchasePrices.reduce((a, b) => a + b, 0) / product.purchasePrices.length
@@ -241,43 +342,162 @@ const InventoryManagementPage = () => {
     });
 
     // Sort by inventory value descending
-    productsArray.sort((a, b) => Math.abs(b.inventoryValue) - Math.abs(a.inventoryValue));
+    products.sort((a, b) => Math.abs(b.inventoryValue) - Math.abs(a.inventoryValue));
 
     // Calculate summary
     const summary = {
-      totalPurchased: productsArray.reduce((sum, p) => sum + p.purchased, 0),
-      totalSold: productsArray.reduce((sum, p) => sum + p.sold, 0),
-      totalInventory: productsArray.reduce((sum, p) => sum + p.inventory, 0),
-      totalPurchaseAmount: productsArray.reduce((sum, p) => sum + p.purchaseAmount, 0),
-      totalSalesAmount: productsArray.reduce((sum, p) => sum + p.salesAmount, 0),
-      totalInventoryValue: productsArray.reduce((sum, p) => sum + p.inventoryValue, 0),
-      ordersProcessed: processedOrders,
+      totalPurchased: products.reduce((sum, p) => sum + p.purchased, 0),
+      totalSold: products.reduce((sum, p) => sum + p.sold, 0),
+      totalInventory: products.reduce((sum, p) => sum + p.inventory, 0),
+      totalPurchaseAmount: products.reduce((sum, p) => sum + p.purchaseAmount, 0),
+      totalSalesAmount: products.reduce((sum, p) => sum + p.salesAmount, 0),
+      totalInventoryValue: products.reduce((sum, p) => sum + p.inventoryValue, 0),
+      soldWaybillsCount: soldAfterCutoff,
+      purchasedWaybillsCount: purchasedAfterCutoff,
     };
 
     console.log('📦 INVENTORY CALCULATION COMPLETE');
-    console.log(`✅ Total unique products: ${productsArray.length}`);
+    console.log(`✅ Total unique products: ${products.length}`);
     console.log(`✅ Total inventory value: ₾${summary.totalInventoryValue.toFixed(2)}`);
+    console.log(`📊 Waybills after cutoff - Sold: ${soldAfterCutoff}, Purchased: ${purchasedAfterCutoff}`);
 
-    return { products: productsArray, summary };
-  }, [orders, products, showResults, startDate, endDate, isAfterCutoffDate, isInDateRange]);
+    return { products, summary };
+  }, [soldWaybills, purchasedWaybills, inventoryLoading, extractProductsFromWaybillDetail, isAfterCutoffDate]);
 
-  const calculateInventory = () => {
-    setShowResults(true);
+  // API call with enhanced abort controller and cache (SAME AS RSApiManagementPage)
+  const callAPI = useCallback(async (operation, params = {}) => {
+    // Enhanced input validation
+    if (params.create_date_s && params.create_date_e && new Date(params.create_date_s) > new Date(params.create_date_e)) {
+      dispatch({ type: ACTION_TYPES.SET_ERROR, payload: translations.dateRangeError });
+      return;
+    }
+
+    // Generate cache key
+    const cacheKey = generateCacheKey(operation, params);
+    if (apiCache[cacheKey]) {
+      handleApiResponse(operation, apiCache[cacheKey]);
+      return;
+    }
+
+    // Abort previous request for this operation
+    const existingController = abortControllersRef.current.get(operation);
+    if (existingController) {
+      existingController.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllersRef.current.set(operation, controller);
+
+    dispatch({ type: ACTION_TYPES.SET_LOADING, payload: true });
+    dispatch({ type: ACTION_TYPES.SET_LOADING_OP, op: operation, payload: true });
+    dispatch({ type: ACTION_TYPES.SET_ERROR, payload: '' });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rs/${operation}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+
+      // Cache list operations
+      if (operation === 'get_waybills' || operation === 'get_buyer_waybills') {
+        setApiCache((prev) => ({ ...prev, [cacheKey]: data }));
+      }
+
+      handleApiResponse(operation, data);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        dispatch({ type: ACTION_TYPES.SET_ERROR, payload: err.message || 'ქსელის შეცდომა' });
+      }
+    } finally {
+      dispatch({ type: ACTION_TYPES.SET_LOADING, payload: false });
+      dispatch({ type: ACTION_TYPES.SET_LOADING_OP, op: operation, payload: false });
+      abortControllersRef.current.delete(operation);
+    }
+  }, [apiCache]);
+
+  const handleApiResponse = (operation, data) => {
+    if (data.success === false) {
+      dispatch({ type: ACTION_TYPES.SET_ERROR, payload: data.error || 'ოპერაცია ვერ შესრულდა' });
+      return;
+    }
+
+    if (!data.data) return;
+
+    const totalWaybillsInResponse = calculateWaybillCount(data, operation);
+    const waybills = extractWaybillsFromResponse(data, operation);
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`${operation}: Raw count ${totalWaybillsInResponse}, Extracted ${waybills.length}`);
+    }
+
+    if (operation === 'get_waybills') {
+      dispatch({ type: ACTION_TYPES.SET_SOLD_WAYBILLS, payload: waybills });
+      setLoadingStatus(`${translations.waybillsLoaded}: ${waybills.length} გაყიდვა`);
+    }
+    if (operation === 'get_buyer_waybills') {
+      dispatch({ type: ACTION_TYPES.SET_PURCHASED_WAYBILLS, payload: waybills });
+      setLoadingStatus(`${translations.waybillsLoaded}: ${waybills.length} შესყიდვა`);
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    return dateString;
+  };
+
+  const formatEndDate = (dateString) => {
+    if (!dateString) return '';
+    // For end dates, we want to include the entire day, so we add one day
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + 1);
+    return date.toISOString().split('T')[0];
+  };
+
+  const loadInventoryData = async () => {
+    const params = {
+      create_date_s: formatDate(startDate),
+      create_date_e: formatEndDate(endDate),
+    };
+
+    setInventoryLoading(true);
+    setLoadingStatus(translations.fetchingWaybills);
+
+    // Load both sold and purchased waybills (SAME AS VAT CALCULATION)
+    await Promise.all([
+      callAPI('get_waybills', params),
+      callAPI('get_buyer_waybills', params)
+    ]);
+
+    setLoadingStatus(translations.processingProducts);
+    setTimeout(() => {
+      setInventoryLoading(false);
+      setLoadingStatus('');
+    }, 500);
   };
 
   const clearResults = () => {
-    setShowResults(false);
+    dispatch({ type: ACTION_TYPES.SET_SOLD_WAYBILLS, payload: [] });
+    dispatch({ type: ACTION_TYPES.SET_PURCHASED_WAYBILLS, payload: [] });
+    dispatch({ type: ACTION_TYPES.SET_ERROR, payload: '' });
+    setLoadingStatus('');
   };
 
   const exportToExcel = () => {
     if (!inventoryData || inventoryData.products.length === 0) return;
 
-    const { products: productsArray, summary } = inventoryData;
+    const { products, summary } = inventoryData;
 
     // Prepare data for export
-    const exportData = productsArray.map(product => ({
-      'პროდუქტის კოდი (SKU)': product.code,
+    const exportData = products.map(product => ({
+      'პროდუქტის კოდი': product.code,
       'პროდუქტის დასახელება': product.name,
+      'ერთეული': product.unit,
       'შესყიდული (რაოდ.)': product.purchased.toFixed(2),
       'შესყიდვის თანხა (₾)': product.purchaseAmount.toFixed(2),
       'საშუალო შესყიდვის ფასი (₾)': product.avgPurchasePrice.toFixed(2),
@@ -290,8 +510,9 @@ const InventoryManagementPage = () => {
 
     // Add summary row
     exportData.push({
-      'პროდუქტის კოდი (SKU)': '',
+      'პროდუქტის კოდი': '',
       'პროდუქტის დასახელება': 'სულ:',
+      'ერთეული': '',
       'შესყიდული (რაოდ.)': summary.totalPurchased.toFixed(2),
       'შესყიდვის თანხა (₾)': summary.totalPurchaseAmount.toFixed(2),
       'საშუალო შესყიდვის ფასი (₾)': '',
@@ -309,8 +530,9 @@ const InventoryManagementPage = () => {
 
     // Set column widths
     ws['!cols'] = [
-      { wch: 20 }, // Code
+      { wch: 15 }, // Code
       { wch: 35 }, // Name
+      { wch: 10 }, // Unit
       { wch: 15 }, // Purchased Qty
       { wch: 18 }, // Purchase Amount
       { wch: 22 }, // Avg Purchase Price
@@ -327,6 +549,23 @@ const InventoryManagementPage = () => {
     // Save file
     XLSX.writeFile(wb, filename);
   };
+
+  const ApiButton = ({ onClick, children, operation, className = '', ariaLabel }) => (
+    <button
+      onClick={onClick}
+      disabled={loading || loadingOperations[operation] || inventoryLoading}
+      aria-label={ariaLabel || children}
+      aria-busy={loadingOperations[operation] || inventoryLoading}
+      className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 transition-colors ${className}`}
+    >
+      {(loadingOperations[operation] || inventoryLoading) ? (
+        <span className="flex items-center">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+          {translations.loading}
+        </span>
+      ) : children}
+    </button>
+  );
 
   const InputField = ({ label, value, onChange, type = 'text', id }) => {
     const fieldId = id || `field-${label.replace(/\s+/g, '-').toLowerCase()}`;
@@ -347,7 +586,17 @@ const InventoryManagementPage = () => {
     );
   };
 
-  const InventorySummary = ({ summary }) => {
+  const InventorySummary = ({ summary, loading }) => {
+    if (loading) return (
+      <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-lg shadow-md border border-green-200 mb-6">
+        <div className="animate-pulse space-y-4">
+          <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+          <div className="h-4 bg-gray-200 rounded"></div>
+          <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+        </div>
+      </div>
+    );
+
     if (!summary) return null;
 
     return (
@@ -365,6 +614,9 @@ const InventoryManagementPage = () => {
             <p className="text-xs text-gray-500 mt-1">
               {translations.amount}: ₾{summary.totalPurchaseAmount.toFixed(2)}
             </p>
+            <p className="text-xs text-blue-600 mt-1">
+              {summary.purchasedWaybillsCount} ზედდებული
+            </p>
           </div>
 
           <div className="bg-orange-50 p-4 rounded-lg border border-orange-200">
@@ -375,6 +627,9 @@ const InventoryManagementPage = () => {
             <p className="text-xs text-gray-500 mt-1">
               {translations.amount}: ₾{summary.totalSalesAmount.toFixed(2)}
             </p>
+            <p className="text-xs text-orange-600 mt-1">
+              {summary.soldWaybillsCount} ზედდებული
+            </p>
           </div>
 
           <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
@@ -383,7 +638,7 @@ const InventoryManagementPage = () => {
               {summary.totalInventory.toFixed(2)}
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              {translations.inventoryValue}: ₾{summary.totalInventoryValue.toFixed(2)}
+              ღირებულება: ₾{summary.totalInventoryValue.toFixed(2)}
             </p>
           </div>
         </div>
@@ -397,7 +652,7 @@ const InventoryManagementPage = () => {
               {translations.cutoffNote}
             </p>
             <p className="text-xs text-blue-600 mt-1">
-              {translations.dataSource} ({summary.ordersProcessed} {translations.ordersProcessed})
+              {translations.dataSource}
             </p>
           </div>
         )}
@@ -425,26 +680,42 @@ const InventoryManagementPage = () => {
             type="date"
           />
           <div className="flex items-end">
-            <button
-              onClick={calculateInventory}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+            <ApiButton
+              operation="load_inventory"
+              onClick={loadInventoryData}
+              className="w-full"
             >
-              {translations.calculate}
-            </button>
+              {translations.loadData}
+            </ApiButton>
           </div>
           <div className="flex items-end">
             <button
               onClick={clearResults}
               className="w-full px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+              disabled={inventoryLoading}
             >
               {translations.clear}
             </button>
           </div>
         </div>
 
+        {/* Loading Status */}
+        {loadingStatus && (
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+            <p className="text-blue-800 text-sm">{loadingStatus}</p>
+          </div>
+        )}
+
+        {/* Error Display */}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-red-800">{error}</p>
+          </div>
+        )}
+
         {/* Summary Section */}
         {inventoryData && inventoryData.summary && (
-          <InventorySummary summary={inventoryData.summary} />
+          <InventorySummary summary={inventoryData.summary} loading={inventoryLoading} />
         )}
 
         {/* Export Button */}
@@ -472,6 +743,7 @@ const InventoryManagementPage = () => {
                 <tr>
                   <th className="border border-gray-300 px-3 py-2 text-left">{translations.productCode}</th>
                   <th className="border border-gray-300 px-3 py-2 text-left">{translations.productName}</th>
+                  <th className="border border-gray-300 px-3 py-2 text-left">{translations.unitMeasure}</th>
                   <th className="border border-gray-300 px-3 py-2 text-right">{translations.purchased}</th>
                   <th className="border border-gray-300 px-3 py-2 text-right">{translations.avgPurchasePrice}</th>
                   <th className="border border-gray-300 px-3 py-2 text-right">{translations.sold}</th>
@@ -490,6 +762,7 @@ const InventoryManagementPage = () => {
                   >
                     <td className="border border-gray-300 px-3 py-2 font-mono">{product.code}</td>
                     <td className="border border-gray-300 px-3 py-2">{product.name}</td>
+                    <td className="border border-gray-300 px-3 py-2">{product.unit}</td>
                     <td className="border border-gray-300 px-3 py-2 text-right font-mono">
                       {product.purchased.toFixed(2)}
                     </td>
@@ -519,11 +792,14 @@ const InventoryManagementPage = () => {
       )}
 
       {/* No Data Message */}
-      {inventoryData && inventoryData.products.length === 0 && (
+      {inventoryData && inventoryData.products.length === 0 && !inventoryLoading && (
         <div className="bg-white p-6 rounded-lg shadow-md border text-center">
           <p className="text-gray-600">{translations.noData}</p>
           <p className="text-sm text-gray-500 mt-2">
-            შეამოწმეთ თარიღების დიაპაზონი ან დარწმუნდით, რომ არსებობს შეკვეთები 2024 წლის 30 აპრილის შემდეგ
+            RS.ge ზედდებულები არ შეიცავს პროდუქტების დეტალებს. პროდუქტების სიის მისაღებად საჭიროა თითოეული ზედდებულის დეტალების ცალკე ჩამოტვირთვა.
+          </p>
+          <p className="text-sm text-orange-600 mt-2 font-medium">
+            ⚠️ შენიშვნა: RS.ge API ზედდებულების სიაში (get_waybills, get_buyer_waybills) მხოლოდ ჯამური თანხები (FULL_AMOUNT) მოდის, პროდუქტების დეტალები არ არის ხელმისაწვდომი.
           </p>
         </div>
       )}
