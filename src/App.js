@@ -600,9 +600,41 @@ const Dashboard = () => {
       case 'customer-analysis': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <CustomerAnalysisPage /> : null;
       case 'inventory-management': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <InventoryManagementPage /> : null;
       default:
-        return <div className="p-6 bg-white rounded-lg shadow-md border"><h2 className="text-xl font-semibold">{t.welcome}, {user.name}!</h2><p className="text-gray-600 mt-2">{t.selectOption}</p></div>;
+        return <DashboardPage navLinks={navLinks[user.role] || []} setActiveView={setActiveView} userName={user.name} />;
     }
   };
+
+  // Dashboard with big card buttons
+  const DashboardPage = ({ navLinks, setActiveView, userName }) => (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-lg shadow-md border">
+        <h2 className="text-2xl font-bold text-gray-800">{t.welcome}, {userName}!</h2>
+        <p className="text-gray-600 mt-2">{t.selectOption}</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {navLinks.map((link) => (
+          <button
+            key={link.view}
+            onClick={() => setActiveView(link.view)}
+            className="group relative bg-white p-6 rounded-xl shadow-md hover:shadow-xl border-2 border-gray-200 hover:border-blue-400 transition-all duration-200 text-left"
+          >
+            <div className="flex flex-col h-full">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-3xl">📋</span>
+                <svg className="w-6 h-6 text-gray-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-800 group-hover:text-blue-600 transition-colors">
+                {link.label}
+              </h3>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   const navLinks = {
     Admin: [
@@ -632,30 +664,56 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-gray-100">
       <nav className="bg-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-2 md:space-x-4">
-              <span className="font-bold text-lg md:text-xl text-blue-700">{t.appName}</span>
-              <div className="hidden md:flex items-baseline space-x-1">
-                {user && navLinks[user.role] && navLinks[user.role].map(link => (
-                  <button key={link.view} onClick={() => setActiveView(link.view)} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeView === link.view ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>{link.label}</button>
-                ))}
-              </div>
+        <div className="max-w-full mx-auto px-2 sm:px-4 lg:px-6">
+          {/* Top row with app name and user controls */}
+          <div className="flex items-center justify-between h-14 sm:h-16">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setActiveView('dashboard')}
+                className="font-bold text-base sm:text-lg md:text-xl text-blue-700 hover:text-blue-800 transition-colors"
+              >
+                {t.appName}
+              </button>
             </div>
-            <div className="flex items-center space-x-2 md:space-x-4">
-               <div className="flex items-center border rounded-md"><button onClick={decreaseFontSize} className="px-2 py-1 text-lg font-bold leading-none border-r hover:bg-gray-100">-A</button><button onClick={increaseFontSize} className="px-2 py-1 text-lg font-bold leading-none hover:bg-gray-100">+A</button></div>
-               <span className="hidden sm:block text-sm text-gray-500">{t.role}: <span className="font-bold text-gray-800">{user.role}</span></span>
-               <button onClick={logout} className="px-3 py-2 text-sm bg-red-500 text-white rounded-md hover:bg-red-600 font-semibold transition-colors">{t.logout}</button>
+            <div className="flex items-center space-x-1 sm:space-x-2 md:space-x-3">
+               <div className="flex items-center border rounded-md">
+                 <button onClick={decreaseFontSize} className="px-1.5 sm:px-2 py-1 text-sm sm:text-base font-bold leading-none border-r hover:bg-gray-100">-A</button>
+                 <button onClick={increaseFontSize} className="px-1.5 sm:px-2 py-1 text-sm sm:text-base font-bold leading-none hover:bg-gray-100">+A</button>
+               </div>
+               <span className="hidden lg:block text-xs sm:text-sm text-gray-500 max-w-[150px] truncate">
+                 {t.role}: <span className="font-bold text-gray-800">{user.role}</span>
+               </span>
+               <button onClick={logout} className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm bg-red-500 text-white rounded-md hover:bg-red-600 font-semibold transition-colors whitespace-nowrap">
+                 {t.logout}
+               </button>
             </div>
           </div>
-           <div className="md:hidden flex flex-wrap items-baseline space-x-2 py-2 border-t">
+
+          {/* Navigation links - scrollable on all screens */}
+          <div className="border-t border-gray-200">
+            <div className="flex overflow-x-auto py-2 space-x-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
               {user && navLinks[user.role] && navLinks[user.role].map(link => (
-                <button key={link.view} onClick={() => setActiveView(link.view)} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeView === link.view ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>{link.label}</button>
+                <button
+                  key={link.view}
+                  onClick={() => setActiveView(link.view)}
+                  className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
+                    activeView === link.view
+                      ? 'bg-blue-500 text-white shadow-md'
+                      : 'text-gray-700 hover:bg-blue-50 hover:text-blue-700 border border-transparent hover:border-blue-200'
+                  }`}
+                >
+                  {link.label}
+                </button>
               ))}
             </div>
+          </div>
         </div>
       </nav>
-      <main><div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">{renderActiveView()}</div></main>
+      <main>
+        <div className="max-w-full mx-auto py-4 sm:py-6 px-2 sm:px-4 lg:px-6">
+          {renderActiveView()}
+        </div>
+      </main>
     </div>
   );
 };

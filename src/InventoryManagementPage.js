@@ -137,29 +137,51 @@ const InventoryManagementPage = () => {
     return normalizedDate > CUTOFF_DATE;
   }, []);
 
-  // Extract products from waybill detail response
-  const extractProductsFromWaybillDetail = useCallback((waybillDetail) => {
+  // Extract products from waybill object
+  const extractProductsFromWaybillDetail = useCallback((waybill, waybillIndex) => {
     const products = [];
 
-    if (!waybillDetail || !waybillDetail.data) {
+    if (!waybill || typeof waybill !== 'object') {
       return products;
     }
 
-    const data = waybillDetail.data;
+    // Debug first 3 waybills to see actual structure
+    if (waybillIndex < 3) {
+      console.log(`🔍 WAYBILL STRUCTURE #${waybillIndex}:`, {
+        allKeys: Object.keys(waybill),
+        ID: waybill.ID,
+        CREATE_DATE: waybill.CREATE_DATE,
+        FULL_AMOUNT: waybill.FULL_AMOUNT,
+        hasProdItems: !!waybill.PROD_ITEMS,
+        hasItems: !!waybill.ITEMS,
+        PROD_ITEMS_type: waybill.PROD_ITEMS ? (Array.isArray(waybill.PROD_ITEMS) ? 'array' : typeof waybill.PROD_ITEMS) : 'undefined',
+        PROD_ITEMS_keys: waybill.PROD_ITEMS ? Object.keys(waybill.PROD_ITEMS) : [],
+        fullWaybill: waybill
+      });
 
-    // Check multiple possible product list locations in the detail response
+      // Log the actual PROD_ITEMS structure
+      if (waybill.PROD_ITEMS) {
+        console.log(`📦 PROD_ITEMS content:`, waybill.PROD_ITEMS);
+        if (waybill.PROD_ITEMS.PROD_ITEM) {
+          console.log(`📦 PROD_ITEM content:`, waybill.PROD_ITEMS.PROD_ITEM);
+        }
+      }
+    }
+
+    // Check multiple possible product list locations directly in waybill object
     const productSources = [
-      data.PROD_ITEMS?.PROD_ITEM,
-      data.ITEMS?.ITEM,
-      data.Items?.Item,
-      data.prod_items?.prod_item,
-      data.items?.item,
-      data.PRODUCTS?.PRODUCT,
-      data.products?.product,
-      data.WAYBILL?.PROD_ITEMS?.PROD_ITEM,
-      data.WAYBILL?.ITEMS?.ITEM,
-      data.waybill?.PROD_ITEMS?.PROD_ITEM,
-      data.waybill?.ITEMS?.ITEM,
+      waybill.PROD_ITEMS?.PROD_ITEM,
+      waybill.ITEMS?.ITEM,
+      waybill.Items?.Item,
+      waybill.prod_items?.prod_item,
+      waybill.items?.item,
+      waybill.PRODUCTS?.PRODUCT,
+      waybill.products?.product,
+      // Direct arrays
+      waybill.PROD_ITEMS,
+      waybill.ITEMS,
+      waybill.items,
+      waybill.prod_items,
     ];
 
     for (const source of productSources) {
@@ -239,7 +261,7 @@ const InventoryManagementPage = () => {
       purchasedAfterCutoff++;
 
       // Get products from waybill (if available in the waybill list response)
-      const products = extractProductsFromWaybillDetail(waybill);
+      const products = extractProductsFromWaybillDetail(waybill, index);
 
       if (index < 3) {
         console.log(`🟡 Purchased waybill ${index + 1}: Date=${waybillDate}, Products found: ${products.length}`);
@@ -287,7 +309,7 @@ const InventoryManagementPage = () => {
       soldAfterCutoff++;
 
       // Get products from waybill (if available in the waybill list response)
-      const products = extractProductsFromWaybillDetail(waybill);
+      const products = extractProductsFromWaybillDetail(waybill, index);
 
       if (index < 3) {
         console.log(`🔵 Sold waybill ${index + 1}: Date=${waybillDate}, Products found: ${products.length}`);
@@ -493,34 +515,28 @@ const InventoryManagementPage = () => {
 
     const { products, summary } = inventoryData;
 
-    // Prepare data for export
+    // Prepare data for export (4 columns as per requirement)
     const exportData = products.map(product => ({
-      'პროდუქტის კოდი': product.code,
       'პროდუქტის დასახელება': product.name,
+      'წმინდა ინვენტარი': product.inventory.toFixed(2),
+      'გაყიდული': product.sold.toFixed(2),
+      'შესყიდული': product.purchased.toFixed(2),
+      'კოდი': product.code,
       'ერთეული': product.unit,
-      'შესყიდული (რაოდ.)': product.purchased.toFixed(2),
-      'შესყიდვის თანხა (₾)': product.purchaseAmount.toFixed(2),
-      'საშუალო შესყიდვის ფასი (₾)': product.avgPurchasePrice.toFixed(2),
-      'გაყიდული (რაოდ.)': product.sold.toFixed(2),
       'გაყიდვის თანხა (₾)': product.salesAmount.toFixed(2),
-      'საშუალო გაყიდვის ფასი (₾)': product.avgSalePrice.toFixed(2),
-      'ინვენტარი (რაოდ.)': product.inventory.toFixed(2),
-      'ინვენტარის ღირებულება (₾)': product.inventoryValue.toFixed(2),
+      'შესყიდვის თანხა (₾)': product.purchaseAmount.toFixed(2),
     }));
 
     // Add summary row
     exportData.push({
-      'პროდუქტის კოდი': '',
       'პროდუქტის დასახელება': 'სულ:',
+      'წმინდა ინვენტარი': summary.totalInventory.toFixed(2),
+      'გაყიდული': summary.totalSold.toFixed(2),
+      'შესყიდული': summary.totalPurchased.toFixed(2),
+      'კოდი': '',
       'ერთეული': '',
-      'შესყიდული (რაოდ.)': summary.totalPurchased.toFixed(2),
-      'შესყიდვის თანხა (₾)': summary.totalPurchaseAmount.toFixed(2),
-      'საშუალო შესყიდვის ფასი (₾)': '',
-      'გაყიდული (რაოდ.)': summary.totalSold.toFixed(2),
       'გაყიდვის თანხა (₾)': summary.totalSalesAmount.toFixed(2),
-      'საშუალო გაყიდვის ფასი (₾)': '',
-      'ინვენტარი (რაოდ.)': summary.totalInventory.toFixed(2),
-      'ინვენტარის ღირებულება (₾)': summary.totalInventoryValue.toFixed(2),
+      'შესყიდვის თანხა (₾)': summary.totalPurchaseAmount.toFixed(2),
     });
 
     // Create workbook
@@ -530,17 +546,14 @@ const InventoryManagementPage = () => {
 
     // Set column widths
     ws['!cols'] = [
+      { wch: 40 }, // Product Name
+      { wch: 18 }, // Net Inventory
+      { wch: 15 }, // Sold
+      { wch: 15 }, // Purchased
       { wch: 15 }, // Code
-      { wch: 35 }, // Name
       { wch: 10 }, // Unit
-      { wch: 15 }, // Purchased Qty
-      { wch: 18 }, // Purchase Amount
-      { wch: 22 }, // Avg Purchase Price
-      { wch: 15 }, // Sold Qty
       { wch: 18 }, // Sales Amount
-      { wch: 22 }, // Avg Sale Price
-      { wch: 15 }, // Inventory Qty
-      { wch: 25 }, // Inventory Value
+      { wch: 18 }, // Purchase Amount
     ];
 
     // Generate filename with date range
@@ -741,15 +754,22 @@ const InventoryManagementPage = () => {
             <table className="min-w-full table-auto border-collapse border border-gray-300 text-sm">
               <thead className="bg-gray-100 sticky top-0">
                 <tr>
-                  <th className="border border-gray-300 px-3 py-2 text-left">{translations.productCode}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left">{translations.productName}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left">{translations.unitMeasure}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.purchased}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.avgPurchasePrice}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.sold}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.avgSalePrice}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.inventory}</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">{translations.inventoryValue}</th>
+                  <th className="border border-gray-300 px-4 py-3 text-left">
+                    <div className="font-bold">პროდუქტის დასახელება</div>
+                    <div className="text-xs font-normal text-gray-500">(Product Name)</div>
+                  </th>
+                  <th className="border border-gray-300 px-4 py-3 text-right">
+                    <div className="font-bold">წმინდა ინვენტარი</div>
+                    <div className="text-xs font-normal text-gray-500">(Net Inventory)</div>
+                  </th>
+                  <th className="border border-gray-300 px-4 py-3 text-right">
+                    <div className="font-bold">გაყიდული</div>
+                    <div className="text-xs font-normal text-gray-500">(Sold)</div>
+                  </th>
+                  <th className="border border-gray-300 px-4 py-3 text-right">
+                    <div className="font-bold">შესყიდული</div>
+                    <div className="text-xs font-normal text-gray-500">(Purchased)</div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -758,30 +778,40 @@ const InventoryManagementPage = () => {
                     key={`${product.code}_${product.name}_${index}`}
                     className={`${index % 2 === 0 ? 'bg-gray-50' : 'bg-white'} ${
                       product.inventory < 0 ? 'bg-red-50' : ''
-                    }`}
+                    } hover:bg-blue-50 transition-colors`}
                   >
-                    <td className="border border-gray-300 px-3 py-2 font-mono">{product.code}</td>
-                    <td className="border border-gray-300 px-3 py-2">{product.name}</td>
-                    <td className="border border-gray-300 px-3 py-2">{product.unit}</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-mono">
-                      {product.purchased.toFixed(2)}
+                    {/* Product Name */}
+                    <td className="border border-gray-300 px-4 py-3">
+                      <div className="font-medium text-gray-900">{product.name}</div>
+                      <div className="text-xs text-gray-500">{product.code}</div>
                     </td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-mono text-xs text-gray-600">
-                      ₾{product.avgPurchasePrice.toFixed(2)}
-                    </td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-mono">
-                      {product.sold.toFixed(2)}
-                    </td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-mono text-xs text-gray-600">
-                      ₾{product.avgSalePrice.toFixed(2)}
-                    </td>
-                    <td className={`border border-gray-300 px-3 py-2 text-right font-mono font-bold ${
+
+                    {/* Net Inventory (Column 2) */}
+                    <td className={`border border-gray-300 px-4 py-3 text-right font-mono text-lg font-bold ${
                       product.inventory < 0 ? 'text-red-600' : 'text-green-600'
                     }`}>
                       {product.inventory.toFixed(2)}
+                      <div className="text-xs font-normal text-gray-500">{product.unit}</div>
                     </td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-mono font-bold">
-                      ₾{product.inventoryValue.toFixed(2)}
+
+                    {/* Sold Amount (Column 3) */}
+                    <td className="border border-gray-300 px-4 py-3 text-right">
+                      <div className="font-mono text-base text-gray-900">
+                        {product.sold.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        ₾{product.salesAmount.toFixed(2)}
+                      </div>
+                    </td>
+
+                    {/* Purchased Amount (Column 4) */}
+                    <td className="border border-gray-300 px-4 py-3 text-right">
+                      <div className="font-mono text-base text-gray-900">
+                        {product.purchased.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        ₾{product.purchaseAmount.toFixed(2)}
+                      </div>
                     </td>
                   </tr>
                 ))}
