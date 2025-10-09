@@ -120,6 +120,7 @@ const InventoryManagementPage = () => {
     }
 
     try {
+      console.log(`🔵 Calling ${operation} with params:`, params);
       const controller = new AbortController();
       const response = await fetch(`${API_BASE_URL}/api/rs/${operation}`, {
         method: 'POST',
@@ -128,9 +129,17 @@ const InventoryManagementPage = () => {
         signal: controller.signal,
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      console.log(`📡 Response status for ${operation}:`, response.status);
+
+      if (!response.ok) {
+        // Try to get error details from response body
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`❌ Error response for ${operation}:`, errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
 
       const data = await response.json();
+      console.log(`✅ Success for ${operation}:`, data);
 
       // Cache list operations
       if (operation === 'get_waybills' || operation === 'get_buyer_waybills') {
