@@ -1,9 +1,14 @@
-import React, { useState, useMemo, useCallback, useReducer } from 'react';
+import React, { useState, useMemo, useCallback, useReducer, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   extractWaybillsFromResponse,
   generateCacheKey,
 } from './utils/rsWaybills';
+import {
+  loadProductMappings,
+  applyProductMapping,
+  normalizeProductName as normalizeForMapping,
+} from './services/productMappingService';
 
 // API Configuration - same as RSApiManagementPage
 const API_BASE_URL = process.env.REACT_APP_API_URL
@@ -47,6 +52,7 @@ const ACTION_TYPES = {
   SET_SALES_WAYBILLS: 'SET_SALES_WAYBILLS',
   SET_PURCHASE_WAYBILLS: 'SET_PURCHASE_WAYBILLS',
   SET_DETAILED_WAYBILLS: 'SET_DETAILED_WAYBILLS',
+  SET_PRODUCT_MAPPINGS: 'SET_PRODUCT_MAPPINGS',
   SET_ERROR: 'SET_ERROR',
   RESET: 'RESET',
 };
@@ -57,6 +63,7 @@ const initialState = {
   purchaseWaybills: [],
   detailedWaybills: new Map(), // waybill_id -> detailed waybill data
   waybillTypeMap: new Map(), // waybill_id -> boolean (true = sale, false = purchase)
+  productMappings: new Map(), // normalized source name -> mapping data
   error: '',
 };
 
@@ -75,10 +82,12 @@ const reducer = (state, action) => {
         detailedWaybills: action.payload.detailsMap,
         waybillTypeMap: action.payload.waybillTypeMap
       };
+    case ACTION_TYPES.SET_PRODUCT_MAPPINGS:
+      return { ...state, productMappings: action.payload };
     case ACTION_TYPES.SET_ERROR:
       return { ...state, error: action.payload, loading: false };
     case ACTION_TYPES.RESET:
-      return initialState;
+      return { ...initialState, productMappings: state.productMappings }; // Keep mappings on reset
     default:
       return state;
   }
@@ -86,7 +95,7 @@ const reducer = (state, action) => {
 
 const InventoryManagementPage = () => {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { loading, salesWaybills, purchaseWaybills, detailedWaybills, waybillTypeMap, error } = state;
+  const { loading, salesWaybills, purchaseWaybills, detailedWaybills, waybillTypeMap, productMappings, error } = state;
 
   // Form states with cutoff date as default start
   const [startDate, setStartDate] = useState(CUTOFF_DATE);
@@ -95,6 +104,22 @@ const InventoryManagementPage = () => {
 
   // API cache
   const [apiCache, setApiCache] = useState({});
+
+  // Load product mappings on component mount
+  useEffect(() => {
+    const loadMappings = async () => {
+      try {
+        console.log('🔄 Loading product mappings from Firebase...');
+        const mappings = await loadProductMappings();
+        dispatch({ type: ACTION_TYPES.SET_PRODUCT_MAPPINGS, payload: mappings });
+        console.log(`✅ Loaded ${mappings.size} product mappings`);
+      } catch (error) {
+        console.error('❌ Failed to load product mappings:', error);
+      }
+    };
+
+    loadMappings();
+  }, []);
 
   // Date formatting - EXACTLY same as RSApiManagementPage
   const formatDate = (dateString) => {
@@ -368,15 +393,16 @@ const InventoryManagementPage = () => {
     return products;
   }, []);
 
-  // Normalize product name for consistent aggregation
-  const normalizeProductName = useCallback((name) => {
-    if (!name) return 'უცნობი პროდუქტი';
+  // Apply product mapping and normalize for consistent aggregation
+  const getMappedProductName = useCallback((originalName) => {
+    if (!originalName) return 'უცნობი პროდუქტი';
 
-    return name
-      .trim() // Remove leading/trailing whitespace
-      .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
-      .toLowerCase(); // Case-insensitive comparison
-  }, []);
+    // Apply mapping if exists
+    const mappedName = applyProductMapping(originalName, productMappings);
+
+    // Normalize the mapped name for aggregation
+    return normalizeForMapping(mappedName);
+  }, [productMappings]);
 
   // Calculate inventory from detailed waybills
   const inventoryData = useMemo(() => {
@@ -409,20 +435,27 @@ const InventoryManagementPage = () => {
       }
 
       products.forEach(product => {
-        // Normalize product name for consistent aggregation
-        const normalizedName = normalizeProductName(product.name);
-        const key = normalizedName;
+        // Apply product mapping and normalize
+        const mappedName = getMappedProductName(product.name);
+        const key = mappedName;
 
         if (!productMap.has(key)) {
+          // Get the display name (mapped name with original casing)
+          const displayName = applyProductMapping(product.name, productMappings);
+
           productMap.set(key, {
-            name: product.name, // Keep original name for display
-            normalizedName: normalizedName, // Store normalized for debugging
+            name: displayName, // Display mapped name
+            originalNames: new Set([product.name]), // Track all original names for debugging
+            normalizedKey: key, // Store normalized for debugging
             unit: product.unit,
             purchased: 0,
             sold: 0,
             purchaseAmount: 0,
             salesAmount: 0,
           });
+        } else {
+          // Add this original name to the set
+          productMap.get(key).originalNames.add(product.name);
         }
 
         const existing = productMap.get(key);
@@ -465,10 +498,20 @@ const InventoryManagementPage = () => {
     console.log('📦 INVENTORY CALCULATION COMPLETE');
     console.log(`✅ Processed waybills: ${processedCount}/${detailedWaybills.size}`);
     console.log(`⚠️ Skipped waybills: ${skippedCount}`);
-    console.log(`✅ Total unique products (normalized): ${productsArray.length}`);
+    console.log(`✅ Total unique products (after mapping): ${productsArray.length}`);
+    console.log(`🗺️ Product mappings applied: ${productMappings.size}`);
+
+    // Log products with multiple original names (shows mapping is working)
+    const mappedProducts = productsArray.filter(p => p.originalNames.size > 1);
+    if (mappedProducts.length > 0) {
+      console.log(`🔀 ${mappedProducts.length} products aggregated from multiple sources:`);
+      mappedProducts.slice(0, 5).forEach(p => {
+        console.log(`  - "${p.name}": ${p.originalNames.size} variations: ${Array.from(p.originalNames).join(', ')}`);
+      });
+    }
 
     return { products: productsArray, summary };
-  }, [detailedWaybills, waybillTypeMap, showResults, extractProductsFromWaybillDetail, normalizeProductName]);
+  }, [detailedWaybills, waybillTypeMap, showResults, extractProductsFromWaybillDetail, getMappedProductName, productMappings]);
 
   // Main calculation handler
   const calculateInventory = async () => {

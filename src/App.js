@@ -3,6 +3,7 @@ import { getTomorrow, getToday, parseExcelDate, normalizeName, t } from './utils
 import RSApiManagementPage from './RSApiManagementPage';
 import CustomerAnalysisPage from './CustomerAnalysisPage';
 import InventoryManagementPage from './InventoryManagementPage';
+import ProductMappingPage from './ProductMappingPage';
 
 // ============================================================================
 // 1. FIREBASE & TRANSLATION SETUP
@@ -599,6 +600,7 @@ const Dashboard = () => {
       case 'rs-api-management': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <RSApiManagementPage /> : null;
       case 'customer-analysis': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <CustomerAnalysisPage /> : null;
       case 'inventory-management': return (user.role === 'Admin' || user.role === 'Purchase Manager') ? <InventoryManagementPage /> : null;
+      case 'product-mapping': return user.role === 'Admin' ? <ProductMappingPage /> : null;
       default:
         return <DashboardPage navLinks={navLinks[user.role] || []} setActiveView={setActiveView} userName={user.name} />;
     }
@@ -647,6 +649,7 @@ const Dashboard = () => {
         { label: t.rsApiManagement, view: 'rs-api-management' },
         { label: 'მომხმარებელთა ანალიზი', view: 'customer-analysis' },
         { label: 'ინვენტარიზაციის მართვა', view: 'inventory-management' },
+        { label: 'პროდუქტების მიბმა', view: 'product-mapping' },
     ],
     Seller: [{ label: t.addOrder, view: 'add-order' }, { label: t.orderSummary, view: 'order-summary' }, { label: t.addCustomer, view: 'add-customer' }],
   'Purchase Manager': [
