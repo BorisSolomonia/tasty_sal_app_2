@@ -204,10 +204,22 @@ const InventoryManagementPage = () => {
 
       const response = await callAPI('get_waybill', { waybill_id: waybillId });
 
+      console.log(`📦 FULL WAYBILL DETAIL RESPONSE FOR ID ${waybillId}:`, response);
+
       if (response && response.data) {
+        console.log(`📊 response.data structure:`, response.data);
+        console.log(`📊 response.data keys:`, Object.keys(response.data));
+
+        // Deep inspection of the structure
+        if (response.data.RESULT) {
+          console.log(`📊 RESULT structure:`, response.data.RESULT);
+          console.log(`📊 RESULT keys:`, Object.keys(response.data.RESULT));
+        }
+
         return response.data;
       }
 
+      console.warn(`⚠️ No data in response for waybill ${waybillId}`);
       return null;
     } catch (err) {
       console.error(`❌ Error fetching waybill details for ${waybillId}:`, err);
@@ -218,65 +230,109 @@ const InventoryManagementPage = () => {
   // Fetch all waybill details in batches
   const fetchAllWaybillDetails = useCallback(async (waybillsList) => {
     const detailsMap = new Map();
-    const batchSize = 10; // Fetch 10 at a time to avoid overwhelming the API
-    let fetchedCount = 0;
 
-    console.log(`🔄 Fetching details for ${waybillsList.length} waybills...`);
+    // TESTING: Only fetch first 3 waybills to debug structure
+    const testLimit = 3;
+    const limitedList = waybillsList.slice(0, testLimit);
 
-    for (let i = 0; i < waybillsList.length; i += batchSize) {
-      const batch = waybillsList.slice(i, i + batchSize);
+    console.log(`🔄 TESTING MODE: Fetching details for ${limitedList.length} waybills (out of ${waybillsList.length} total)`);
+    console.log(`📋 First few waybill IDs:`, limitedList.map(wb => wb.ID || wb.INVOICE_ID));
 
-      const batchPromises = batch.map(async (waybill) => {
-        const waybillId = waybill.ID || waybill.INVOICE_ID;
-        if (!waybillId) return null;
+    for (let i = 0; i < limitedList.length; i++) {
+      const waybill = limitedList[i];
+      const waybillId = waybill.ID || waybill.INVOICE_ID;
 
-        const details = await fetchWaybillDetails(waybillId);
-        if (details) {
-          detailsMap.set(waybillId, details);
-          fetchedCount++;
-        }
-        return details;
-      });
+      if (!waybillId) {
+        console.warn(`⚠️ Waybill at index ${i} has no ID:`, waybill);
+        continue;
+      }
 
-      await Promise.all(batchPromises);
+      console.log(`\n🔄 Fetching waybill ${i + 1}/${limitedList.length}: ID=${waybillId}`);
 
-      console.log(`✅ Fetched ${fetchedCount}/${waybillsList.length} waybill details`);
+      const details = await fetchWaybillDetails(waybillId);
+
+      if (details) {
+        detailsMap.set(waybillId, details);
+        console.log(`✅ Successfully fetched details for waybill ${waybillId}`);
+      } else {
+        console.warn(`⚠️ No details returned for waybill ${waybillId}`);
+      }
     }
 
+    console.log(`\n✅ TESTING COMPLETE: Fetched ${detailsMap.size}/${limitedList.length} waybill details`);
     return detailsMap;
   }, [fetchWaybillDetails]);
 
   // Extract products from detailed waybill
-  const extractProductsFromWaybillDetail = useCallback((waybillDetail, isSale = true) => {
+  const extractProductsFromWaybillDetail = useCallback((waybillDetail, waybillId, isSale = true) => {
+    console.log(`\n🔍 EXTRACTING PRODUCTS FROM WAYBILL ${waybillId}:`);
+    console.log(`📦 Full waybill detail:`, waybillDetail);
+    console.log(`📦 All keys in waybill detail:`, Object.keys(waybillDetail));
+
     const products = [];
 
+    // Check if there's a RESULT wrapper
+    let actualDetail = waybillDetail;
+    if (waybillDetail.RESULT) {
+      console.log(`📦 Found RESULT wrapper, unwrapping...`);
+      actualDetail = waybillDetail.RESULT;
+      console.log(`📦 RESULT keys:`, Object.keys(actualDetail));
+    }
+
     // Check multiple possible locations for product items
-    const productSources = [
-      waybillDetail?.PROD_ITEMS?.PROD_ITEM,
-      waybillDetail?.ITEMS?.ITEM,
-      waybillDetail?.PRODUCTS?.PRODUCT,
-      waybillDetail?.prod_items?.prod_item,
-      waybillDetail?.items?.item,
+    const possiblePaths = [
+      { path: 'PROD_ITEMS.PROD_ITEM', value: actualDetail?.PROD_ITEMS?.PROD_ITEM },
+      { path: 'PROD_ITEM', value: actualDetail?.PROD_ITEM },
+      { path: 'ITEMS.ITEM', value: actualDetail?.ITEMS?.ITEM },
+      { path: 'ITEM', value: actualDetail?.ITEM },
+      { path: 'PRODUCTS.PRODUCT', value: actualDetail?.PRODUCTS?.PRODUCT },
+      { path: 'PRODUCT', value: actualDetail?.PRODUCT },
+      { path: 'prod_items.prod_item', value: actualDetail?.prod_items?.prod_item },
+      { path: 'items.item', value: actualDetail?.items?.item },
+      { path: 'PROD_ITEMS', value: actualDetail?.PROD_ITEMS },
+      { path: 'ITEMS', value: actualDetail?.ITEMS },
     ];
 
+    console.log(`🔍 Checking ${possiblePaths.length} possible product locations:`);
+    possiblePaths.forEach(({ path, value }) => {
+      console.log(`  - ${path}: ${value ? (Array.isArray(value) ? `Array(${value.length})` : 'Object') : 'null/undefined'}`);
+    });
+
     let productList = null;
-    for (const source of productSources) {
-      if (source) {
-        productList = Array.isArray(source) ? source : [source];
+    let foundPath = null;
+
+    for (const { path, value } of possiblePaths) {
+      if (value) {
+        productList = Array.isArray(value) ? value : [value];
+        foundPath = path;
+        console.log(`✅ Found products at ${path}:`, productList.length, 'items');
         break;
       }
     }
 
     if (!productList || productList.length === 0) {
-      console.warn('⚠️ No products found in waybill detail:', waybillDetail);
+      console.warn(`⚠️ No products found in waybill ${waybillId}`);
+      console.warn(`⚠️ Available fields in detail:`, Object.keys(actualDetail));
+
+      // Deep log the first few fields to understand structure
+      Object.keys(actualDetail).slice(0, 5).forEach(key => {
+        console.log(`  Field "${key}":`, actualDetail[key]);
+      });
+
       return products;
     }
 
-    productList.forEach(item => {
-      const name = item.PROD_NAME || item.NAME || item.prod_name || item.name || 'უცნობი პროდუქტი';
-      const quantity = parseFloat(item.AMOUNT || item.QUANTITY || item.amount || item.quantity || 0);
-      const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.price || item.unit_price || 0);
-      const unit = item.UNIT || item.unit || 'ცალი';
+    console.log(`📦 Processing ${productList.length} products from ${foundPath}`);
+
+    productList.forEach((item, index) => {
+      console.log(`  Product ${index + 1}:`, item);
+
+      const name = item.PROD_NAME || item.NAME || item.prod_name || item.name || item.DESCRIPTION || item.description || 'უცნობი პროდუქტი';
+      const quantity = parseFloat(item.AMOUNT || item.QUANTITY || item.amount || item.quantity || item.QTY || item.qty || 0);
+      const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.price || item.unit_price || item.UNITPRICE || item.unitprice || 0);
+      const unit = item.UNIT || item.unit || item.MEASURE || item.measure || 'ცალი';
+
+      console.log(`    → Name: ${name}, Quantity: ${quantity}, Price: ${price}, Unit: ${unit}`);
 
       if (quantity > 0) {
         products.push({
@@ -286,9 +342,12 @@ const InventoryManagementPage = () => {
           unit,
           isSale,
         });
+      } else {
+        console.warn(`    ⚠️ Skipping product with zero quantity:`, item);
       }
     });
 
+    console.log(`✅ Extracted ${products.length} valid products from waybill ${waybillId}`);
     return products;
   }, []);
 
@@ -303,9 +362,13 @@ const InventoryManagementPage = () => {
 
     // Process all detailed waybills
     detailedWaybills.forEach((waybillDetail, waybillId) => {
+      console.log(`\n🔄 Processing waybill ${waybillId}...`);
+
       // Determine if this is a sale or purchase waybill
-      const isSaleWaybill = salesWaybills.some(wb => wb.ID === waybillId || wb.INVOICE_ID === waybillId);
-      const isPurchaseWaybill = purchaseWaybills.some(wb => wb.ID === waybillId || wb.INVOICE_ID === waybillId);
+      const isSaleWaybill = salesWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
+      const isPurchaseWaybill = purchaseWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
+
+      console.log(`  Type: ${isSaleWaybill ? 'SALE' : (isPurchaseWaybill ? 'PURCHASE' : 'UNKNOWN')}`);
 
       if (!isSaleWaybill && !isPurchaseWaybill) {
         console.warn(`⚠️ Waybill ${waybillId} not found in sales or purchases list`);
@@ -313,7 +376,9 @@ const InventoryManagementPage = () => {
       }
 
       // Extract products from this waybill
-      const products = extractProductsFromWaybillDetail(waybillDetail, isSaleWaybill);
+      const products = extractProductsFromWaybillDetail(waybillDetail, waybillId, isSaleWaybill);
+
+      console.log(`  Extracted ${products.length} products from waybill ${waybillId}`);
 
       products.forEach(product => {
         const key = product.name;
@@ -332,9 +397,11 @@ const InventoryManagementPage = () => {
         const existing = productMap.get(key);
 
         if (product.isSale) {
+          console.log(`    ➕ Adding SALE: ${product.name} x ${product.quantity}`);
           existing.sold += product.quantity;
           existing.salesAmount += product.quantity * product.price;
         } else {
+          console.log(`    ➕ Adding PURCHASE: ${product.name} x ${product.quantity}`);
           existing.purchased += product.quantity;
           existing.purchaseAmount += product.quantity * product.price;
         }
