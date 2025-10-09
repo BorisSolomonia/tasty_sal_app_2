@@ -8,10 +8,10 @@ import {
 // API Configuration - same as RSApiManagementPage
 const API_BASE_URL = process.env.REACT_APP_API_URL
   ? process.env.REACT_APP_API_URL
-  : (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3005');
+  : (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001');
 
-// Inventory cutoff date - after April 29th, 2024 (so April 30th onwards)
-const CUTOFF_DATE = '2024-04-29';
+// Inventory cutoff date - after April 29th, 2025 (so April 30th onwards)
+const CUTOFF_DATE = '2025-04-29';
 
 // Translations
 const translations = {
@@ -33,7 +33,7 @@ const translations = {
   period: "პერიოდი",
   items: "პოზიცია",
   amount: "თანხა",
-  cutoffNote: "* ინვენტარიზაცია ითვლება 2024 წლის 30 აპრილიდან",
+  cutoffNote: "* ინვენტარიზაცია ითვლება 2025 წლის 30 აპრილიდან",
   dataSource: "მონაცემთა წყარო: RS.ge ზედები",
   waybillsProcessed: "დამუშავებული ზედები",
   loading: "იტვირთება...",
@@ -56,6 +56,7 @@ const initialState = {
   salesWaybills: [],
   purchaseWaybills: [],
   detailedWaybills: new Map(), // waybill_id -> detailed waybill data
+  waybillTypeMap: new Map(), // waybill_id -> boolean (true = sale, false = purchase)
   error: '',
 };
 
@@ -68,7 +69,12 @@ const reducer = (state, action) => {
     case ACTION_TYPES.SET_PURCHASE_WAYBILLS:
       return { ...state, purchaseWaybills: action.payload };
     case ACTION_TYPES.SET_DETAILED_WAYBILLS:
-      return { ...state, detailedWaybills: action.payload };
+      // action.payload is { detailsMap, waybillTypeMap }
+      return {
+        ...state,
+        detailedWaybills: action.payload.detailsMap,
+        waybillTypeMap: action.payload.waybillTypeMap
+      };
     case ACTION_TYPES.SET_ERROR:
       return { ...state, error: action.payload, loading: false };
     case ACTION_TYPES.RESET:
@@ -80,7 +86,7 @@ const reducer = (state, action) => {
 
 const InventoryManagementPage = () => {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { loading, salesWaybills, purchaseWaybills, detailedWaybills, error } = state;
+  const { loading, salesWaybills, purchaseWaybills, detailedWaybills, waybillTypeMap, error } = state;
 
   // Form states with cutoff date as default start
   const [startDate, setStartDate] = useState(CUTOFF_DATE);
@@ -213,14 +219,32 @@ const InventoryManagementPage = () => {
     }
   }, [callAPI]);
 
-  // Fetch all waybill details in batches
+  // Fetch all waybill details in batches with type tracking
   const fetchAllWaybillDetails = useCallback(async (salesList, purchasesList) => {
     const detailsMap = new Map();
-    const allWaybills = [...salesList, ...purchasesList];
+    const waybillTypeMap = new Map(); // Track if waybill is sale or purchase
     const batchSize = 50; // Fetch 50 at a time
     let fetchedCount = 0;
     let errorCount = 0;
 
+    // Create lookup maps for both sales and purchases with ALL possible ID fields
+    const salesIdMap = new Map();
+    const purchaseIdMap = new Map();
+
+    salesList.forEach(wb => {
+      // Store all possible ID combinations
+      if (wb.ID) salesIdMap.set(wb.ID, wb);
+      if (wb.INVOICE_ID) salesIdMap.set(wb.INVOICE_ID, wb);
+      if (wb.id) salesIdMap.set(wb.id, wb);
+    });
+
+    purchasesList.forEach(wb => {
+      if (wb.ID) purchaseIdMap.set(wb.ID, wb);
+      if (wb.INVOICE_ID) purchaseIdMap.set(wb.INVOICE_ID, wb);
+      if (wb.id) purchaseIdMap.set(wb.id, wb);
+    });
+
+    const allWaybills = [...salesList, ...purchasesList];
     console.log(`🔄 FULL PROCESSING MODE: Fetching details for ${allWaybills.length} waybills (${salesList.length} sales + ${purchasesList.length} purchases)`);
     console.log(`📊 Will process in batches of ${batchSize}`);
 
@@ -236,10 +260,19 @@ const InventoryManagementPage = () => {
         const waybillId = waybill.ID || waybill.INVOICE_ID;
         if (!waybillId) return null;
 
+        // Determine type BEFORE fetching details using our lookup maps
+        const isSale = salesIdMap.has(waybillId);
+        const isPurchase = purchaseIdMap.has(waybillId);
+
+        if (!isSale && !isPurchase) {
+          console.warn(`⚠️ Waybill ${waybillId} not found in sales or purchase maps`);
+          return null;
+        }
+
         try {
           const details = await fetchWaybillDetails(waybillId);
           if (details) {
-            return { id: waybillId, details };
+            return { id: waybillId, details, isSale };
           }
         } catch (err) {
           console.error(`❌ Error fetching waybill ${waybillId}:`, err.message);
@@ -248,12 +281,14 @@ const InventoryManagementPage = () => {
         return null;
       });
 
-      const batchResults = await Promise.all(batchPromises);
+      const batchResults = await Promise.allSettled(batchPromises);
 
       // Add successful results to map
       batchResults.forEach(result => {
-        if (result) {
-          detailsMap.set(result.id, result.details);
+        if (result.status === 'fulfilled' && result.value) {
+          const { id, details, isSale } = result.value;
+          detailsMap.set(id, details);
+          waybillTypeMap.set(id, isSale); // Store the type
           fetchedCount++;
         }
       });
@@ -268,7 +303,7 @@ const InventoryManagementPage = () => {
     }
 
     console.log(`\n✅ PROCESSING COMPLETE: Fetched ${fetchedCount}/${allWaybills.length} waybill details (${errorCount} errors)`);
-    return detailsMap;
+    return { detailsMap, waybillTypeMap };
   }, [fetchWaybillDetails]);
 
   // Extract products from detailed waybill
@@ -291,18 +326,24 @@ const InventoryManagementPage = () => {
     }
 
     // GOODS can be either a single object OR an array of objects
+    // CRITICAL: Check in correct priority order to avoid extraction from wrong level
     let productList = null;
 
-    if (goodsList.GOODS) {
-      // CRITICAL: GOODS can be object or array - always convert to array
+    // Priority 1: goodsList.GOODS (most common structure)
+    if (goodsList.GOODS !== undefined) {
       productList = Array.isArray(goodsList.GOODS) ? goodsList.GOODS : [goodsList.GOODS];
-    } else if (goodsList.GOOD) {
+    }
+    // Priority 2: goodsList.GOOD (alternative field name)
+    else if (goodsList.GOOD !== undefined) {
       productList = Array.isArray(goodsList.GOOD) ? goodsList.GOOD : [goodsList.GOOD];
-    } else if (Array.isArray(goodsList)) {
+    }
+    // Priority 3: goodsList itself is an array
+    else if (Array.isArray(goodsList)) {
       productList = goodsList;
     }
 
     if (!productList || productList.length === 0) {
+      console.warn(`⚠️ No products found in GOODS_LIST for waybill ${waybillId}`);
       return products;
     }
 
@@ -327,35 +368,55 @@ const InventoryManagementPage = () => {
     return products;
   }, []);
 
+  // Normalize product name for consistent aggregation
+  const normalizeProductName = useCallback((name) => {
+    if (!name) return 'უცნობი პროდუქტი';
+
+    return name
+      .trim() // Remove leading/trailing whitespace
+      .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+      .toLowerCase(); // Case-insensitive comparison
+  }, []);
+
   // Calculate inventory from detailed waybills
   const inventoryData = useMemo(() => {
-    if (!showResults || detailedWaybills.size === 0) return null;
+    if (!showResults || detailedWaybills.size === 0 || waybillTypeMap.size === 0) return null;
 
     console.log('📦 INVENTORY CALCULATION START (RS.ge Waybills)');
     console.log(`📋 Total detailed waybills: ${detailedWaybills.size}`);
+    console.log(`🏷️ Total waybill types tracked: ${waybillTypeMap.size}`);
 
     const productMap = new Map();
+    let processedCount = 0;
+    let skippedCount = 0;
 
-    // Process all detailed waybills
+    // Process all detailed waybills using waybillTypeMap
     detailedWaybills.forEach((waybillDetail, waybillId) => {
-      // Determine if this is a sale or purchase waybill
-      const isSaleWaybill = salesWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
-      const isPurchaseWaybill = purchaseWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
+      // Get waybill type from waybillTypeMap (true = sale, false = purchase)
+      const isSaleWaybill = waybillTypeMap.get(waybillId);
 
-      if (!isSaleWaybill && !isPurchaseWaybill) {
-        console.warn(`⚠️ Waybill ${waybillId} not found in sales or purchases list`);
+      if (isSaleWaybill === undefined) {
+        console.warn(`⚠️ Waybill ${waybillId} type not found in waybillTypeMap - SKIPPING`);
+        skippedCount++;
         return;
       }
 
       // Extract products from this waybill
       const products = extractProductsFromWaybillDetail(waybillDetail, waybillId, isSaleWaybill);
 
+      if (products.length === 0) {
+        console.warn(`⚠️ No products extracted from waybill ${waybillId}`);
+      }
+
       products.forEach(product => {
-        const key = product.name;
+        // Normalize product name for consistent aggregation
+        const normalizedName = normalizeProductName(product.name);
+        const key = normalizedName;
 
         if (!productMap.has(key)) {
           productMap.set(key, {
-            name: product.name,
+            name: product.name, // Keep original name for display
+            normalizedName: normalizedName, // Store normalized for debugging
             unit: product.unit,
             purchased: 0,
             sold: 0,
@@ -374,6 +435,8 @@ const InventoryManagementPage = () => {
           existing.purchaseAmount += product.quantity * product.price;
         }
       });
+
+      processedCount++;
     });
 
     // Calculate inventory
@@ -400,10 +463,12 @@ const InventoryManagementPage = () => {
     };
 
     console.log('📦 INVENTORY CALCULATION COMPLETE');
-    console.log(`✅ Total unique products: ${productsArray.length}`);
+    console.log(`✅ Processed waybills: ${processedCount}/${detailedWaybills.size}`);
+    console.log(`⚠️ Skipped waybills: ${skippedCount}`);
+    console.log(`✅ Total unique products (normalized): ${productsArray.length}`);
 
     return { products: productsArray, summary };
-  }, [detailedWaybills, salesWaybills, purchaseWaybills, showResults, extractProductsFromWaybillDetail]);
+  }, [detailedWaybills, waybillTypeMap, showResults, extractProductsFromWaybillDetail, normalizeProductName]);
 
   // Main calculation handler
   const calculateInventory = async () => {
@@ -411,12 +476,12 @@ const InventoryManagementPage = () => {
       // Step 1: Fetch waybill lists
       const { salesWaybills: sales, purchaseWaybills: purchases } = await fetchWaybillLists();
 
-      // Step 2: Fetch detailed waybills with products
+      // Step 2: Fetch detailed waybills with products and type tracking
       dispatch({ type: ACTION_TYPES.SET_LOADING, payload: true });
 
-      const detailsMap = await fetchAllWaybillDetails(sales, purchases);
+      const { detailsMap, waybillTypeMap } = await fetchAllWaybillDetails(sales, purchases);
 
-      dispatch({ type: ACTION_TYPES.SET_DETAILED_WAYBILLS, payload: detailsMap });
+      dispatch({ type: ACTION_TYPES.SET_DETAILED_WAYBILLS, payload: { detailsMap, waybillTypeMap } });
       dispatch({ type: ACTION_TYPES.SET_LOADING, payload: false });
 
       setShowResults(true);
@@ -713,7 +778,7 @@ const InventoryManagementPage = () => {
         <div className="bg-white p-6 rounded-lg shadow-md border text-center">
           <p className="text-gray-600">{translations.noData}</p>
           <p className="text-sm text-gray-500 mt-2">
-            შეამოწმეთ თარიღების დიაპაზონი ან დარწმუნდით, რომ არსებობს ზედები 2024 წლის 30 აპრილის შემდეგ
+            შეამოწმეთ თარიღების დიაპაზონი ან დარწმუნდით, რომ არსებობს ზედები 2025 წლის 30 აპრილის შემდეგ
           </p>
         </div>
       )}
