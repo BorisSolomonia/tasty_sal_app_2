@@ -267,36 +267,36 @@ const InventoryManagementPage = () => {
   const extractProductsFromWaybillDetail = useCallback((waybillDetail, waybillId, isSale = true) => {
     console.log(`\n🔍 EXTRACTING PRODUCTS FROM WAYBILL ${waybillId}:`);
     console.log(`📦 Full waybill detail:`, waybillDetail);
-    console.log(`📦 All keys in waybill detail:`, Object.keys(waybillDetail));
 
     const products = [];
 
-    // Check if there's a RESULT wrapper
+    // Navigate to actual waybill data: response.data.WAYBILL
     let actualDetail = waybillDetail;
-    if (waybillDetail.RESULT) {
-      console.log(`📦 Found RESULT wrapper, unwrapping...`);
-      actualDetail = waybillDetail.RESULT;
-      console.log(`📦 RESULT keys:`, Object.keys(actualDetail));
+
+    if (waybillDetail.WAYBILL) {
+      console.log(`📦 Found WAYBILL wrapper, unwrapping...`);
+      actualDetail = waybillDetail.WAYBILL;
+      console.log(`📦 WAYBILL keys:`, Object.keys(actualDetail));
     }
 
-    // Check multiple possible locations for product items
-    const possiblePaths = [
-      { path: 'PROD_ITEMS.PROD_ITEM', value: actualDetail?.PROD_ITEMS?.PROD_ITEM },
-      { path: 'PROD_ITEM', value: actualDetail?.PROD_ITEM },
-      { path: 'ITEMS.ITEM', value: actualDetail?.ITEMS?.ITEM },
-      { path: 'ITEM', value: actualDetail?.ITEM },
-      { path: 'PRODUCTS.PRODUCT', value: actualDetail?.PRODUCTS?.PRODUCT },
-      { path: 'PRODUCT', value: actualDetail?.PRODUCT },
-      { path: 'prod_items.prod_item', value: actualDetail?.prod_items?.prod_item },
-      { path: 'items.item', value: actualDetail?.items?.item },
-      { path: 'PROD_ITEMS', value: actualDetail?.PROD_ITEMS },
-      { path: 'ITEMS', value: actualDetail?.ITEMS },
-    ];
+    // Check GOODS_LIST for products
+    let goodsList = actualDetail.GOODS_LIST;
 
-    console.log(`🔍 Checking ${possiblePaths.length} possible product locations:`);
-    possiblePaths.forEach(({ path, value }) => {
-      console.log(`  - ${path}: ${value ? (Array.isArray(value) ? `Array(${value.length})` : 'Object') : 'null/undefined'}`);
-    });
+    if (!goodsList) {
+      console.warn(`⚠️ No GOODS_LIST found in waybill ${waybillId}`);
+      console.warn(`⚠️ Available fields:`, Object.keys(actualDetail));
+      return products;
+    }
+
+    console.log(`📦 GOODS_LIST found:`, goodsList);
+    console.log(`📦 GOODS_LIST keys:`, Object.keys(goodsList));
+
+    // Products can be in GOODS_LIST.GOODS or directly as GOOD
+    const possiblePaths = [
+      { path: 'GOODS_LIST.GOODS', value: goodsList.GOODS },
+      { path: 'GOODS_LIST.GOOD', value: goodsList.GOOD },
+      { path: 'GOODS_LIST (direct)', value: Array.isArray(goodsList) ? goodsList : null },
+    ];
 
     let productList = null;
     let foundPath = null;
@@ -311,14 +311,8 @@ const InventoryManagementPage = () => {
     }
 
     if (!productList || productList.length === 0) {
-      console.warn(`⚠️ No products found in waybill ${waybillId}`);
-      console.warn(`⚠️ Available fields in detail:`, Object.keys(actualDetail));
-
-      // Deep log the first few fields to understand structure
-      Object.keys(actualDetail).slice(0, 5).forEach(key => {
-        console.log(`  Field "${key}":`, actualDetail[key]);
-      });
-
+      console.warn(`⚠️ No products found in GOODS_LIST for waybill ${waybillId}`);
+      console.warn(`⚠️ GOODS_LIST structure:`, goodsList);
       return products;
     }
 
@@ -327,10 +321,11 @@ const InventoryManagementPage = () => {
     productList.forEach((item, index) => {
       console.log(`  Product ${index + 1}:`, item);
 
-      const name = item.PROD_NAME || item.NAME || item.prod_name || item.name || item.DESCRIPTION || item.description || 'უცნობი პროდუქტი';
-      const quantity = parseFloat(item.AMOUNT || item.QUANTITY || item.amount || item.quantity || item.QTY || item.qty || 0);
-      const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.price || item.unit_price || item.UNITPRICE || item.unitprice || 0);
-      const unit = item.UNIT || item.unit || item.MEASURE || item.measure || 'ცალი';
+      // RS.ge typical fields in GOODS_LIST
+      const name = item.PRODUCT_NAME || item.PROD_NAME || item.NAME || item.name || item.DESCRIPTION || 'უცნობი პროდუქტი';
+      const quantity = parseFloat(item.AMOUNT || item.QUANTITY || item.QTY || item.amount || item.quantity || 0);
+      const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.UNITPRICE || item.price || item.unit_price || 0);
+      const unit = item.UNIT_NAME || item.UNIT || item.unit || item.MEASURE || 'ცალი';
 
       console.log(`    → Name: ${name}, Quantity: ${quantity}, Price: ${price}, Unit: ${unit}`);
 
