@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a full-stack sales management application with the following structure:
 
-### Frontend Architecture.
+### Frontend Architecture
 - **Framework**: React 19 with functional components and hooks
 - **Styling**: Tailwind CSS with responsive design
 - **State Management**: React Context API with AuthContext and DataContext
