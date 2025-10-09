@@ -228,26 +228,32 @@ const InventoryManagementPage = () => {
   }, [callAPI]);
 
   // Fetch all waybill details in batches
-  const fetchAllWaybillDetails = useCallback(async (waybillsList) => {
+  const fetchAllWaybillDetails = useCallback(async (salesList, purchasesList) => {
     const detailsMap = new Map();
 
-    // TESTING: Only fetch first 3 waybills to debug structure
-    const testLimit = 3;
-    const limitedList = waybillsList.slice(0, testLimit);
+    // TESTING: Fetch 2 sales + 2 purchases to test both types
+    const testSalesLimit = 2;
+    const testPurchasesLimit = 2;
 
-    console.log(`🔄 TESTING MODE: Fetching details for ${limitedList.length} waybills (out of ${waybillsList.length} total)`);
-    console.log(`📋 First few waybill IDs:`, limitedList.map(wb => wb.ID || wb.INVOICE_ID));
+    const salesTest = salesList.slice(0, testSalesLimit);
+    const purchasesTest = purchasesList.slice(0, testPurchasesLimit);
+    const allTestWaybills = [...salesTest, ...purchasesTest];
 
-    for (let i = 0; i < limitedList.length; i++) {
-      const waybill = limitedList[i];
+    console.log(`🔄 TESTING MODE: Fetching ${salesTest.length} sales + ${purchasesTest.length} purchases = ${allTestWaybills.length} total`);
+    console.log(`📋 Sales IDs:`, salesTest.map(wb => wb.ID));
+    console.log(`📋 Purchase IDs:`, purchasesTest.map(wb => wb.ID));
+
+    for (let i = 0; i < allTestWaybills.length; i++) {
+      const waybill = allTestWaybills[i];
       const waybillId = waybill.ID || waybill.INVOICE_ID;
+      const isSale = salesTest.includes(waybill);
 
       if (!waybillId) {
         console.warn(`⚠️ Waybill at index ${i} has no ID:`, waybill);
         continue;
       }
 
-      console.log(`\n🔄 Fetching waybill ${i + 1}/${limitedList.length}: ID=${waybillId}`);
+      console.log(`\n🔄 Fetching waybill ${i + 1}/${allTestWaybills.length}: ID=${waybillId} (${isSale ? 'SALE' : 'PURCHASE'})`);
 
       const details = await fetchWaybillDetails(waybillId);
 
@@ -259,7 +265,7 @@ const InventoryManagementPage = () => {
       }
     }
 
-    console.log(`\n✅ TESTING COMPLETE: Fetched ${detailsMap.size}/${limitedList.length} waybill details`);
+    console.log(`\n✅ TESTING COMPLETE: Fetched ${detailsMap.size}/${allTestWaybills.length} waybill details`);
     return detailsMap;
   }, [fetchWaybillDetails]);
 
@@ -290,24 +296,26 @@ const InventoryManagementPage = () => {
 
     console.log(`📦 GOODS_LIST found:`, goodsList);
     console.log(`📦 GOODS_LIST keys:`, Object.keys(goodsList));
+    console.log(`📦 GOODS_LIST.GOODS type:`, typeof goodsList.GOODS);
+    console.log(`📦 GOODS_LIST.GOODS isArray:`, Array.isArray(goodsList.GOODS));
 
-    // Products can be in GOODS_LIST.GOODS or directly as GOOD
-    const possiblePaths = [
-      { path: 'GOODS_LIST.GOODS', value: goodsList.GOODS },
-      { path: 'GOODS_LIST.GOOD', value: goodsList.GOOD },
-      { path: 'GOODS_LIST (direct)', value: Array.isArray(goodsList) ? goodsList : null },
-    ];
-
+    // GOODS can be either a single object OR an array of objects
     let productList = null;
     let foundPath = null;
 
-    for (const { path, value } of possiblePaths) {
-      if (value) {
-        productList = Array.isArray(value) ? value : [value];
-        foundPath = path;
-        console.log(`✅ Found products at ${path}:`, productList.length, 'items');
-        break;
-      }
+    if (goodsList.GOODS) {
+      // CRITICAL: GOODS can be object or array - always convert to array
+      productList = Array.isArray(goodsList.GOODS) ? goodsList.GOODS : [goodsList.GOODS];
+      foundPath = 'GOODS_LIST.GOODS';
+      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
+    } else if (goodsList.GOOD) {
+      productList = Array.isArray(goodsList.GOOD) ? goodsList.GOOD : [goodsList.GOOD];
+      foundPath = 'GOODS_LIST.GOOD';
+      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
+    } else if (Array.isArray(goodsList)) {
+      productList = goodsList;
+      foundPath = 'GOODS_LIST (direct array)';
+      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
     }
 
     if (!productList || productList.length === 0) {
@@ -320,10 +328,11 @@ const InventoryManagementPage = () => {
 
     productList.forEach((item, index) => {
       console.log(`  Product ${index + 1}:`, item);
+      console.log(`    All item keys:`, Object.keys(item));
 
-      // RS.ge typical fields in GOODS_LIST
-      const name = item.PRODUCT_NAME || item.PROD_NAME || item.NAME || item.name || item.DESCRIPTION || 'უცნობი პროდუქტი';
-      const quantity = parseFloat(item.AMOUNT || item.QUANTITY || item.QTY || item.amount || item.quantity || 0);
+      // RS.ge GOODS fields: W_NAME (product name), QUANTITY, PRICE
+      const name = item.W_NAME || item.PRODUCT_NAME || item.PROD_NAME || item.NAME || item.name || item.DESCRIPTION || 'უცნობი პროდუქტი';
+      const quantity = parseFloat(item.QUANTITY || item.AMOUNT || item.QTY || item.amount || item.quantity || 0);
       const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.UNITPRICE || item.price || item.unit_price || 0);
       const unit = item.UNIT_NAME || item.UNIT || item.unit || item.MEASURE || 'ცალი';
 
@@ -441,8 +450,7 @@ const InventoryManagementPage = () => {
       // Step 2: Fetch detailed waybills with products
       dispatch({ type: ACTION_TYPES.SET_LOADING, payload: true });
 
-      const allWaybills = [...sales, ...purchases];
-      const detailsMap = await fetchAllWaybillDetails(allWaybills);
+      const detailsMap = await fetchAllWaybillDetails(sales, purchases);
 
       dispatch({ type: ACTION_TYPES.SET_DETAILED_WAYBILLS, payload: detailsMap });
       dispatch({ type: ACTION_TYPES.SET_LOADING, payload: false });
