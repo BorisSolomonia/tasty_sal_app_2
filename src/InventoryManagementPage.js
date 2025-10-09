@@ -147,24 +147,22 @@ const InventoryManagementPage = () => {
 
     // Debug first 3 waybills to see actual structure
     if (waybillIndex < 3) {
-      console.log(`🔍 WAYBILL STRUCTURE #${waybillIndex}:`, {
-        allKeys: Object.keys(waybill),
-        ID: waybill.ID,
-        CREATE_DATE: waybill.CREATE_DATE,
-        FULL_AMOUNT: waybill.FULL_AMOUNT,
-        hasProdItems: !!waybill.PROD_ITEMS,
-        hasItems: !!waybill.ITEMS,
-        PROD_ITEMS_type: waybill.PROD_ITEMS ? (Array.isArray(waybill.PROD_ITEMS) ? 'array' : typeof waybill.PROD_ITEMS) : 'undefined',
-        PROD_ITEMS_keys: waybill.PROD_ITEMS ? Object.keys(waybill.PROD_ITEMS) : [],
-        fullWaybill: waybill
+      // Log ALL keys to find where products are
+      console.log(`🔍 WAYBILL #${waybillIndex} - ALL KEYS:`, Object.keys(waybill));
+
+      // Log each key's value type and sample
+      Object.keys(waybill).forEach(key => {
+        const value = waybill[key];
+        const type = Array.isArray(value) ? 'array' : typeof value;
+
+        if (type === 'object' || type === 'array') {
+          console.log(`  📌 ${key} (${type}):`, value);
+        }
       });
 
-      // Log the actual PROD_ITEMS structure
-      if (waybill.PROD_ITEMS) {
-        console.log(`📦 PROD_ITEMS content:`, waybill.PROD_ITEMS);
-        if (waybill.PROD_ITEMS.PROD_ITEM) {
-          console.log(`📦 PROD_ITEM content:`, waybill.PROD_ITEMS.PROD_ITEM);
-        }
+      // Full waybill dump for first one only
+      if (waybillIndex === 1) {
+        console.log(`🔍 FULL WAYBILL #${waybillIndex}:`, JSON.stringify(waybill, null, 2));
       }
     }
 
