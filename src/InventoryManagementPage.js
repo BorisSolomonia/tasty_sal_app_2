@@ -90,23 +90,18 @@ const InventoryManagementPage = () => {
   // API cache
   const [apiCache, setApiCache] = useState({});
 
-  // Date formatting - same as RSApiManagementPage
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  // Date formatting - EXACTLY same as RSApiManagementPage
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    return dateString;
   };
 
-  const formatEndDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day} 23:59:59`;
+  const formatEndDate = (dateString) => {
+    if (!dateString) return '';
+    // For end dates, we want to include the entire day, so we add one day
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + 1);
+    return date.toISOString().split('T')[0];
   };
 
   // API call function - same pattern as RSApiManagementPage
