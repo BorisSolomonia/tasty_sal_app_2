@@ -200,29 +200,15 @@ const InventoryManagementPage = () => {
   // Fetch detailed waybill with products using get_waybill (singular)
   const fetchWaybillDetails = useCallback(async (waybillId) => {
     try {
-      console.log(`🔍 Fetching details for waybill ID: ${waybillId}`);
-
       const response = await callAPI('get_waybill', { waybill_id: waybillId });
 
-      console.log(`📦 FULL WAYBILL DETAIL RESPONSE FOR ID ${waybillId}:`, response);
-
       if (response && response.data) {
-        console.log(`📊 response.data structure:`, response.data);
-        console.log(`📊 response.data keys:`, Object.keys(response.data));
-
-        // Deep inspection of the structure
-        if (response.data.RESULT) {
-          console.log(`📊 RESULT structure:`, response.data.RESULT);
-          console.log(`📊 RESULT keys:`, Object.keys(response.data.RESULT));
-        }
-
         return response.data;
       }
 
-      console.warn(`⚠️ No data in response for waybill ${waybillId}`);
       return null;
     } catch (err) {
-      console.error(`❌ Error fetching waybill details for ${waybillId}:`, err);
+      console.error(`❌ Error fetching waybill ${waybillId}:`, err.message);
       return null;
     }
   }, [callAPI]);
@@ -230,113 +216,102 @@ const InventoryManagementPage = () => {
   // Fetch all waybill details in batches
   const fetchAllWaybillDetails = useCallback(async (salesList, purchasesList) => {
     const detailsMap = new Map();
+    const allWaybills = [...salesList, ...purchasesList];
+    const batchSize = 50; // Fetch 50 at a time
+    let fetchedCount = 0;
+    let errorCount = 0;
 
-    // TESTING: Fetch 2 sales + 2 purchases to test both types
-    const testSalesLimit = 2;
-    const testPurchasesLimit = 2;
+    console.log(`🔄 FULL PROCESSING MODE: Fetching details for ${allWaybills.length} waybills (${salesList.length} sales + ${purchasesList.length} purchases)`);
+    console.log(`📊 Will process in batches of ${batchSize}`);
 
-    const salesTest = salesList.slice(0, testSalesLimit);
-    const purchasesTest = purchasesList.slice(0, testPurchasesLimit);
-    const allTestWaybills = [...salesTest, ...purchasesTest];
+    for (let i = 0; i < allWaybills.length; i += batchSize) {
+      const batch = allWaybills.slice(i, i + batchSize);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(allWaybills.length / batchSize);
 
-    console.log(`🔄 TESTING MODE: Fetching ${salesTest.length} sales + ${purchasesTest.length} purchases = ${allTestWaybills.length} total`);
-    console.log(`📋 Sales IDs:`, salesTest.map(wb => wb.ID));
-    console.log(`📋 Purchase IDs:`, purchasesTest.map(wb => wb.ID));
+      console.log(`\n📦 Processing batch ${batchNumber}/${totalBatches} (waybills ${i + 1}-${Math.min(i + batchSize, allWaybills.length)})`);
 
-    for (let i = 0; i < allTestWaybills.length; i++) {
-      const waybill = allTestWaybills[i];
-      const waybillId = waybill.ID || waybill.INVOICE_ID;
-      const isSale = salesTest.includes(waybill);
+      // Process batch in parallel
+      const batchPromises = batch.map(async (waybill) => {
+        const waybillId = waybill.ID || waybill.INVOICE_ID;
+        if (!waybillId) return null;
 
-      if (!waybillId) {
-        console.warn(`⚠️ Waybill at index ${i} has no ID:`, waybill);
-        continue;
-      }
+        try {
+          const details = await fetchWaybillDetails(waybillId);
+          if (details) {
+            return { id: waybillId, details };
+          }
+        } catch (err) {
+          console.error(`❌ Error fetching waybill ${waybillId}:`, err.message);
+          errorCount++;
+        }
+        return null;
+      });
 
-      console.log(`\n🔄 Fetching waybill ${i + 1}/${allTestWaybills.length}: ID=${waybillId} (${isSale ? 'SALE' : 'PURCHASE'})`);
+      const batchResults = await Promise.all(batchPromises);
 
-      const details = await fetchWaybillDetails(waybillId);
+      // Add successful results to map
+      batchResults.forEach(result => {
+        if (result) {
+          detailsMap.set(result.id, result.details);
+          fetchedCount++;
+        }
+      });
 
-      if (details) {
-        detailsMap.set(waybillId, details);
-        console.log(`✅ Successfully fetched details for waybill ${waybillId}`);
-      } else {
-        console.warn(`⚠️ No details returned for waybill ${waybillId}`);
+      const progress = ((i + batch.length) / allWaybills.length * 100).toFixed(1);
+      console.log(`✅ Batch ${batchNumber} complete: ${detailsMap.size} total waybills fetched (${progress}% complete)`);
+
+      // Small delay between batches to avoid overwhelming the API
+      if (i + batchSize < allWaybills.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
-    console.log(`\n✅ TESTING COMPLETE: Fetched ${detailsMap.size}/${allTestWaybills.length} waybill details`);
+    console.log(`\n✅ PROCESSING COMPLETE: Fetched ${fetchedCount}/${allWaybills.length} waybill details (${errorCount} errors)`);
     return detailsMap;
   }, [fetchWaybillDetails]);
 
   // Extract products from detailed waybill
   const extractProductsFromWaybillDetail = useCallback((waybillDetail, waybillId, isSale = true) => {
-    console.log(`\n🔍 EXTRACTING PRODUCTS FROM WAYBILL ${waybillId}:`);
-    console.log(`📦 Full waybill detail:`, waybillDetail);
-
     const products = [];
 
     // Navigate to actual waybill data: response.data.WAYBILL
     let actualDetail = waybillDetail;
 
     if (waybillDetail.WAYBILL) {
-      console.log(`📦 Found WAYBILL wrapper, unwrapping...`);
       actualDetail = waybillDetail.WAYBILL;
-      console.log(`📦 WAYBILL keys:`, Object.keys(actualDetail));
     }
 
     // Check GOODS_LIST for products
     let goodsList = actualDetail.GOODS_LIST;
 
     if (!goodsList) {
-      console.warn(`⚠️ No GOODS_LIST found in waybill ${waybillId}`);
-      console.warn(`⚠️ Available fields:`, Object.keys(actualDetail));
+      console.warn(`⚠️ No GOODS_LIST in waybill ${waybillId}`);
       return products;
     }
 
-    console.log(`📦 GOODS_LIST found:`, goodsList);
-    console.log(`📦 GOODS_LIST keys:`, Object.keys(goodsList));
-    console.log(`📦 GOODS_LIST.GOODS type:`, typeof goodsList.GOODS);
-    console.log(`📦 GOODS_LIST.GOODS isArray:`, Array.isArray(goodsList.GOODS));
-
     // GOODS can be either a single object OR an array of objects
     let productList = null;
-    let foundPath = null;
 
     if (goodsList.GOODS) {
       // CRITICAL: GOODS can be object or array - always convert to array
       productList = Array.isArray(goodsList.GOODS) ? goodsList.GOODS : [goodsList.GOODS];
-      foundPath = 'GOODS_LIST.GOODS';
-      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
     } else if (goodsList.GOOD) {
       productList = Array.isArray(goodsList.GOOD) ? goodsList.GOOD : [goodsList.GOOD];
-      foundPath = 'GOODS_LIST.GOOD';
-      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
     } else if (Array.isArray(goodsList)) {
       productList = goodsList;
-      foundPath = 'GOODS_LIST (direct array)';
-      console.log(`✅ Found products at ${foundPath}:`, productList.length, 'items');
     }
 
     if (!productList || productList.length === 0) {
-      console.warn(`⚠️ No products found in GOODS_LIST for waybill ${waybillId}`);
-      console.warn(`⚠️ GOODS_LIST structure:`, goodsList);
       return products;
     }
 
-    console.log(`📦 Processing ${productList.length} products from ${foundPath}`);
-
-    productList.forEach((item, index) => {
-      console.log(`  Product ${index + 1}:`, item);
-      console.log(`    All item keys:`, Object.keys(item));
-
+    productList.forEach((item) => {
       // RS.ge GOODS fields: W_NAME (product name), QUANTITY, PRICE
-      const name = item.W_NAME || item.PRODUCT_NAME || item.PROD_NAME || item.NAME || item.name || item.DESCRIPTION || 'უცნობი პროდუქტი';
+      const name = item.W_NAME || item.PRODUCT_NAME || item.PROD_NAME || item.NAME || item.name || 'უცნობი პროდუქტი';
       const quantity = parseFloat(item.QUANTITY || item.AMOUNT || item.QTY || item.amount || item.quantity || 0);
       const price = parseFloat(item.PRICE || item.UNIT_PRICE || item.UNITPRICE || item.price || item.unit_price || 0);
-      const unit = item.UNIT_NAME || item.UNIT || item.unit || item.MEASURE || 'ცალი';
-
-      console.log(`    → Name: ${name}, Quantity: ${quantity}, Price: ${price}, Unit: ${unit}`);
+      const unit = item.UNIT_NAME || item.UNIT || item.unit || item.MEASURE || 'კგ';
 
       if (quantity > 0) {
         products.push({
@@ -346,12 +321,9 @@ const InventoryManagementPage = () => {
           unit,
           isSale,
         });
-      } else {
-        console.warn(`    ⚠️ Skipping product with zero quantity:`, item);
       }
     });
 
-    console.log(`✅ Extracted ${products.length} valid products from waybill ${waybillId}`);
     return products;
   }, []);
 
@@ -366,13 +338,9 @@ const InventoryManagementPage = () => {
 
     // Process all detailed waybills
     detailedWaybills.forEach((waybillDetail, waybillId) => {
-      console.log(`\n🔄 Processing waybill ${waybillId}...`);
-
       // Determine if this is a sale or purchase waybill
       const isSaleWaybill = salesWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
       const isPurchaseWaybill = purchaseWaybills.some(wb => (wb.ID === waybillId || wb.INVOICE_ID === waybillId));
-
-      console.log(`  Type: ${isSaleWaybill ? 'SALE' : (isPurchaseWaybill ? 'PURCHASE' : 'UNKNOWN')}`);
 
       if (!isSaleWaybill && !isPurchaseWaybill) {
         console.warn(`⚠️ Waybill ${waybillId} not found in sales or purchases list`);
@@ -381,8 +349,6 @@ const InventoryManagementPage = () => {
 
       // Extract products from this waybill
       const products = extractProductsFromWaybillDetail(waybillDetail, waybillId, isSaleWaybill);
-
-      console.log(`  Extracted ${products.length} products from waybill ${waybillId}`);
 
       products.forEach(product => {
         const key = product.name;
@@ -401,11 +367,9 @@ const InventoryManagementPage = () => {
         const existing = productMap.get(key);
 
         if (product.isSale) {
-          console.log(`    ➕ Adding SALE: ${product.name} x ${product.quantity}`);
           existing.sold += product.quantity;
           existing.salesAmount += product.quantity * product.price;
         } else {
-          console.log(`    ➕ Adding PURCHASE: ${product.name} x ${product.quantity}`);
           existing.purchased += product.quantity;
           existing.purchaseAmount += product.quantity * product.price;
         }

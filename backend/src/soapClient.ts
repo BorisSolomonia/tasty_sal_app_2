@@ -76,7 +76,7 @@ export async function callSoap(
         SOAPAction: `"${NS}${op}"`,
       },
       validateStatus: () => true,
-      timeout: 30000, // 30 seconds timeout
+      timeout: 120000, // 120 seconds timeout (increased for large date ranges)
     });
 
     // 5) Parse XML → JSON
