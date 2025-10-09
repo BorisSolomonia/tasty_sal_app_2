@@ -1,15 +1,15 @@
-import { 
-  getFirestore, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  deleteDoc, 
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
   onSnapshot,
-  serverTimestamp 
+  serverTimestamp
 } from "firebase/firestore";
+import { db } from './firebase';
 
-// Lazy initialization of Firestore to avoid module loading issues
-// const getDb = () => getFirestore();
+// Helper to get db instance
+const getDb = () => db;
 
 export const firestoreService = {
   // Generic functions for any data type

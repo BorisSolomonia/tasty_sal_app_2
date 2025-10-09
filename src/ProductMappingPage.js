@@ -61,7 +61,7 @@ const ProductMappingPage = () => {
     setLoading(true);
     try {
       const mappingsMap = await loadProductMappings();
-      setMappings(mappingsMap);
+      setMappings(mappingsMap); // Store for future use
 
       // Convert Map to array for display
       const array = Array.from(mappingsMap.values())
