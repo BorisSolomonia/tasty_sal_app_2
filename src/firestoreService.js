@@ -9,7 +9,7 @@ import {
 } from "firebase/firestore";
 
 // Lazy initialization of Firestore to avoid module loading issues
-const getDb = () => getFirestore();
+// const getDb = () => getFirestore();
 
 export const firestoreService = {
   // Generic functions for any data type
