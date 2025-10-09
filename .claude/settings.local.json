@@ -43,7 +43,10 @@
       "Read(/C:\\Users\\boris\\D_disc_Boris\\BORIS\\stuff\\TASTY\\APP_last\\Tasty_Sales\\tasty_sal_app_2-master\\backend\\dist/**)",
       "Read(/C:\\Users\\boris\\D_disc_Boris\\BORIS\\stuff\\TASTY\\APP_last\\Tasty_Sales\\tasty_sal_app_2-master\\src/**)",
       "Read(/C:\\Users\\boris\\D_disc_Boris\\BORIS\\stuff\\TASTY\\APP_last\\Tasty_Sales\\tasty_sal_app_2-master/**)",
-      "mcp__ide__executeCode"
+      "mcp__ide__executeCode",
+      "Bash(git log:*)",
+      "Bash(gh workflow:*)",
+      "Bash(gh run list:*)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"
